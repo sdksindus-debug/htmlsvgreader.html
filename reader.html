@@ -25,25 +25,21 @@
         drop.ondrop = (e) => { e.preventDefault(); process(e.dataTransfer.files[0]); };
         file.onchange = (e) => process(e.target.files[0]);
 
-        function process(item) {
-            if (!item) return;
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const img = new Image();
-                img.onload = function() {
-                    // Create a virtual canvas background pipeline to read individual bytes
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    ctx.drawImage(img, 0, 0);
+        function process(selectedFile) {
+            if (!selectedFile) return;
+            
+            const img = new Image();
+            img.onload = function() {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
 
-                    // Grab the raw underlying RGBA flat pixel sequence array
+                try {
                     const imgData = ctx.getImageData(0, 0, img.width, img.height).data;
-                    
                     let svg = `<svg xmlns="http://w3.org" viewBox="0 0 ${img.width} ${img.height}" shape-rendering="crispEdges">\n`;
 
-                    // Read through the linear array coordinates map
                     for (let y = 0; y < img.height; y++) {
                         for (let x = 0; x < img.width; x++) {
                             const index = (y * img.width + x) * 4;
@@ -52,9 +48,8 @@
                             const b = imgData[index + 2];
                             const a = imgData[index + 3];
 
-                            if (a === 0) continue; // Skip transparency
+                            if (a === 0) continue;
 
-                            // Convert current read pointer to Hex values
                             const hex = "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
                             
                             if (a < 255) {
@@ -67,10 +62,15 @@
                     }
                     svg += `</svg>`;
                     output.value = svg;
-                };
-                img.src = e.target.result;
+                    drop.innerText = "Success! Code Generated Below.";
+                } catch (err) {
+                    output.value = "Error reading pixels: " + err.message;
+                }
             };
-            reader.readAsDataURL(item);
+
+            // Fix: Create an object URL directly from the native system file 
+            // instead of reading it into data-URI strings to maintain origin integrity
+            img.src = URL.createObjectURL(selectedFile);
         }
     </script>
 
