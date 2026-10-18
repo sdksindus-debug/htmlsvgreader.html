@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Pixel-Perfect Canvas Rendering</title>
+    <style>
+        body { font-family: monospace; max-width: 800px; margin: 20px auto; padding: 20px; }
+        .drop-box { border: 2px dashed #333; padding: 30px; text-align: center; cursor: pointer; background: #f9f9f9; }
+        .canvas-container { margin-top: 20px; text-align: center; }
+        
+        /* 1. CSS Level Anti-Aliasing Lock */
+        canvas {
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            
+            border: 1px solid #ccc;
+            background: #1a1a1a;
+            max-width: 100%; /* Allows crisp scaling up/down based on width */
+            width: 400px;    /* Blown up visual dimension scale */
+            height: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="drop-box" id="drop">Click or Drop Image Here for Pixel-Perfect Canvas Render</div>
+    <input type="file" id="file" accept="image/*" style="display:none">
+    
+    <div class="canvas-container">
+        <canvas id="pixelCanvas"></canvas>
+    </div>
+
+    <script>
+        const drop = document.getElementById('drop');
+        const file = document.getElementById('file');
+        const canvas = document.getElementById('pixelCanvas');
+        const ctx = canvas.getContext('2d');
+
+        drop.onclick = () => file.click();
+        drop.ondragover = (e) => e.preventDefault();
+        drop.ondrop = (e) => { e.preventDefault(); process(e.dataTransfer.files[0]); };
+        file.onchange = (e) => process(e.target.files[0]);
+
+        function process(selectedFile) {
+            if (!selectedFile) return;
+            
+            const img = new Image();
+            img.onload = function() {
+                // Set hard logical width/height to exactly match original asset pixels
+                canvas.width = img.width;
+                canvas.height = img.height;
+
+                // 2. Hardware/Engine Level Anti-Aliasing Lock
+                ctx.imageSmoothingEnabled = false;
+                ctx.mozImageSmoothingEnabled = false;
+                ctx.webkitImageSmoothingEnabled = false;
+                ctx.msImageSmoothingEnabled = false;
+
+                // Clear layout array and drop image 1:1 onto target coordinate system
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
+                
+                drop.innerText = `Rendered successfully! (${img.width}x${img.height}px)`;
+            };
+
+            img.src = URL.createObjectURL(selectedFile);
+        }
+    </script>
+
+</body>
+</html>
