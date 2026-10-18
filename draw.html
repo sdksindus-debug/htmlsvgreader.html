@@ -1,1 +1,200 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time SVG Drawing Surface</title>
+    <style>
+        * { box-sizing: border-box; font-family: system-ui, sans-serif; }
+        body { margin: 0; padding: 20px; background: #f0f2f5; display: flex; flex-direction: column; height: 100vh; }
+        h1 { margin: 0 0 15px 0; font-size: 1.5rem; color: #333; }
+        .container { display: flex; flex: 1; gap: 20px; min-height: 0; }
+        .panel { flex: 1; display: flex; flex-direction: column; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); padding: 15px; }
+        .panel-title { font-weight: bold; margin-bottom: 10px; color: #555; display: flex; justify-content: space-between; align-items: center; }
+        
+        /* Drawing Area */
+        .svg-wrapper { flex: 1; border: 2px dashed #ccc; border-radius: 6px; position: relative; overflow: hidden; background: #fafafa; cursor: crosshair; }
+        svg { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+        
+        /* Controls */
+        .controls { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+        .btn { padding: 6px 12px; border: none; border-radius: 4px; background: #007bff; color: white; cursor: pointer; font-weight: 500; }
+        .btn:hover { background: #0056b3; }
+        .btn-clear { background: #dc3545; }
+        .btn-clear:hover { background: #bd2130; }
+        
+        /* Code Area */
+        textarea { flex: 1; width: 100%; resize: none; font-family: 'Courier New', Courier, monospace; font-size: 13px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background: #f8f9fa; color: #333; }
+        textarea:focus { outline: 2px solid #007bff; }
+    </style>
+</head>
+<body>
+
+    <h1>Interactive SVG Canvas</h1>
+    
+    <div class="container">
+        <!-- Left Panel: The Drawing Canvas -->
+        <div class="panel">
+            <div class="panel-title">
+                <span>Drawing Board</span>
+                <div class="controls">
+                    <input type="color" id="colorPicker" value="#007bff">
+                    <button class="btn btn-clear" id="clearBtn">Clear</button>
+                </div>
+            </div>
+            <div class="svg-wrapper" id="canvasWrapper">
+                <!-- User draws inside this SVG group element -->
+                <svg id="drawingSvg" xmlns="http://w3.org">
+                    <g id="drawingGroup"></g>
+                </svg>
+            </div>
+        </div>
+        
+        <!-- Right Panel: Code Input / Output -->
+        <div class="panel">
+            <div class="panel-title">
+                <span>Live SVG Code</span>
+                <button class="btn" id="loadBtn">Import / Update from Code</button>
+            </div>
+            <textarea id="svgCode" placeholder="Draw on the left canvas or paste valid SVG paths here..."></textarea>
+        </div>
+    </div>
+
+    <script>
+        const svg = document.getElementById('drawingSvg');
+        const group = document.getElementById('drawingGroup');
+        const codeOut = document.getElementById('svgCode');
+        const wrapper = document.getElementById('canvasWrapper');
+        const colorPicker = document.getElementById('colorPicker');
+        const clearBtn = document.getElementById('clearBtn');
+        const loadBtn = document.getElementById('loadBtn');
+
+        let isDrawing = false;
+        let currentPath = null;
+        let points = [];
+
+        // --- Drawing Logic ---
+        function getMousePos(e) {
+            const rect = svg.getBoundingClientRect();
+            // Supports both mouse and touch events
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return {
+                x: clientX - rect.left,
+                y: clientY - rect.top
+            };
+        }
+
+        function startDrawing(e) {
+            isDrawing = true;
+            points = [getMousePos(e)];
+            
+            currentPath = document.createElementNS("http://w3.org", "path");
+            currentPath.setAttribute("stroke", colorPicker.value);
+            currentPath.setAttribute("stroke-width", "4");
+            currentPath.setAttribute("fill", "none");
+            currentPath.setAttribute("stroke-linecap", "round");
+            currentPath.setAttribute("stroke-linejoin", "round");
+            
+            group.appendChild(currentPath);
+            updatePathString();
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            e.preventDefault(); // Prevents page scrolling while drawing on mobile
+            
+            points.push(getMousePos(e));
+            updatePathString();
+            updateCodeOutput();
+        }
+
+        function stopDrawing() {
+            if (!isDrawing) return;
+            isDrawing = false;
+            currentPath = null;
+            points = [];
+        }
+
+        // Generate the SVG 'd' path string using quadratic curves for smoothness
+        function updatePathString() {
+            if (points.length === 0) return;
+            
+            let d = `M ${points[0].x} ${points[0].y}`;
+            
+            if (points.length === 2) {
+                d += ` L ${points[1].x} ${points[1].y}`;
+            } else if (points.length > 2) {
+                for (let i = 1; i < points.length - 1; i++) {
+                    const xc = (points[i].x + points[i + 1].x) / 2;
+                    const yc = (points[i].y + points[i + 1].y) / 2;
+                    d += ` Q ${points[i].x} ${points[i].y}, ${xc} ${yc}`;
+                }
+                d += ` L ${points[points.length - 1].x} ${points[points.length - 1].y}`;
+            }
+            
+            currentPath.setAttribute("d", d);
+        }
+
+        // --- Code Sync Logic ---
+        function updateCodeOutput() {
+            // Formats the XML tree inside the SVG container into the text area
+            const serializer = new XMLSerializer();
+            let xmlString = serializer.serializeToString(svg);
+            
+            // Basic regex formatting for readability in the textarea
+            xmlString = xmlString
+                .replace(/></g, '>\n  <')
+                .replace('</svg>', '\n</svg>')
+                .replace('<g', '\n  <g')
+                .replace('</g>', '\n  </g>');
+                
+            codeOut.value = xmlString;
+        }
+
+        function loadSvgFromCode() {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(codeOut.value, "image/svg+xml");
+            const newGroup = doc.getElementById('drawingGroup') || doc.querySelector('g') || doc.documentElement;
+            
+            if (newGroup && doc.documentElement.nodeName !== "parsererror") {
+                // Clear existing paths
+                group.innerHTML = '';
+                
+                // Append nodes from the parsed code string
+                const nodes = Array.from(newGroup.children);
+                nodes.forEach(node => {
+                    // Only import geometric tags for security and rendering stability
+                    if(['path', 'circle', 'rect', 'line', 'polyline', 'polygon'].includes(node.tagName.toLowerCase())) {
+                        group.appendChild(document.importNode(node, true));
+                    }
+                });
+            } else {
+                alert("Invalid SVG Code framework. Please make sure it contains valid path elements.");
+            }
+        }
+
+        // --- Event Listeners ---
+        wrapper.addEventListener('mousedown', startDrawing);
+        window.addEventListener('mousemove', draw);
+        window.addEventListener('mouseup', stopDrawing);
+
+        // Touch support for tablets/phones
+        wrapper.addEventListener('touchstart', startDrawing);
+        window.addEventListener('touchmove', draw);
+        window.addEventListener('touchend', stopDrawing);
+
+        // Control Buttons
+        clearBtn.addEventListener('click', () => {
+            group.innerHTML = '';
+            updateCodeOutput();
+        });
+        
+        loadBtn.addEventListener('click', loadSvgFromCode);
+
+        // Initialize empty string on load
+        updateCodeOutput();
+    </script>
+</body>
+</html>
