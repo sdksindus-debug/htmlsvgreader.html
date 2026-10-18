@@ -22,23 +22,39 @@
 
         drop.onclick = () => file.click();
         drop.ondragover = (e) => e.preventDefault();
-        drop.ondrop = (e) => { e.preventDefault(); process(e.dataTransfer.files[0]); };
-        file.onchange = (e) => process(e.target.files[0]);
+        drop.ondrop = (e) => {
+            e.preventDefault();
+            const fileItem = e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files[0] : null;
+            process(fileItem);
+        };
+        file.onchange = (e) => process(e.target.files && e.target.files[0]);
 
         function process(selectedFile) {
             if (!selectedFile) return;
-            
-            const img = new Image();
-            img.onload = function() {
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                canvas.width = img.width;
-                canvas.height = img.height;
-                ctx.drawImage(img, 0, 0);
+            if (!selectedFile.type.startsWith('image/')) {
+                output.value = 'Please select a valid image file.';
+                return;
+            }
 
+            const objectUrl = URL.createObjectURL(selectedFile);
+            const img = new Image();
+
+            img.onload = function() {
                 try {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+
+                    if (!ctx) {
+                        throw new Error('Canvas is not supported in this browser.');
+                    }
+
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+
                     const imgData = ctx.getImageData(0, 0, img.width, img.height).data;
-                    let svg = `<svg xmlns="http://w3.org" viewBox="0 0 ${img.width} ${img.height}" shape-rendering="crispEdges">\n`;
+                    const svgNS = 'http://www.w3.org/2000/svg';
+                    let svg = `<svg xmlns="${svgNS}" viewBox="0 0 ${img.width} ${img.height}" shape-rendering="crispEdges">\n`;
 
                     for (let y = 0; y < img.height; y++) {
                         for (let x = 0; x < img.width; x++) {
@@ -50,27 +66,29 @@
 
                             if (a === 0) continue;
 
-                            const hex = "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
-                            
-                            if (a < 255) {
-                                const alpha = (a / 255).toFixed(2);
-                                svg += `  <rect x="${x}" y="${y}" width="1" height="1" fill="${hex}" fill-opacity="${alpha}" />\n`;
-                            } else {
-                                svg += `  <rect x="${x}" y="${y}" width="1" height="1" fill="${hex}" />\n`;
-                            }
+                            const hex = '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+                            const alpha = (a / 255).toFixed(2);
+
+                            svg += `  <rect x="${x}" y="${y}" width="1" height="1" fill="${hex}"${a < 255 ? ` fill-opacity="${alpha}"` : ''} />\n`;
                         }
                     }
-                    svg += `</svg>`;
+
+                    svg += '</svg>';
                     output.value = svg;
-                    drop.innerText = "Success! Code Generated Below.";
+                    drop.innerText = 'Success! Code Generated Below.';
                 } catch (err) {
-                    output.value = "Error reading pixels: " + err.message;
+                    output.value = 'Error reading pixels: ' + err.message;
+                } finally {
+                    URL.revokeObjectURL(objectUrl);
                 }
             };
 
-            // Fix: Create an object URL directly from the native system file 
-            // instead of reading it into data-URI strings to maintain origin integrity
-            img.src = URL.createObjectURL(selectedFile);
+            img.onerror = function() {
+                output.value = 'Unable to load the selected image file.';
+                URL.revokeObjectURL(objectUrl);
+            };
+
+            img.src = objectUrl;
         }
     </script>
 
