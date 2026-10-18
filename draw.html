@@ -1,212 +1,117 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pixel-to-Pixel Realtime SVG Canvas</title>
+    <title>Simple Line SVG Board</title>
     <style>
-        * { box-sizing: border-box; font-family: system-ui, sans-serif; }
-        body { margin: 0; padding: 20px; background: #f4f6f8; display: flex; flex-direction: column; height: 100vh; }
-        h1 { margin: 0 0 15px 0; font-size: 1.4rem; color: #222; }
-        .container { display: flex; flex: 1; gap: 20px; min-height: 0; }
-        .panel { flex: 1; display: flex; flex-direction: column; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); padding: 15px; }
-        .panel-title { font-weight: bold; margin-bottom: 10px; color: #444; display: flex; justify-content: space-between; align-items: center; }
-        
-        /* Grid Canvas Environment */
-        .canvas-container { flex: 1; border: 1px solid #ccc; border-radius: 6px; position: relative; overflow: hidden; background: white; cursor: crosshair; }
-        svg { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
-        
-        /* Tool Interfaces */
+        body { font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; margin: 10px; gap: 10px; }
         .controls { display: flex; gap: 10px; align-items: center; }
-        .btn { padding: 6px 12px; border: none; border-radius: 4px; background: #2563eb; color: white; cursor: pointer; font-weight: 500; font-size: 0.9rem; }
-        .btn:hover { background: #1d4ed8; }
-        .btn-clear { background: #dc2626; }
-        .btn-clear:hover { background: #b91c1c; }
-        select { padding: 5px; border-radius: 4px; border: 1px solid #ccc; }
-        
-        /* Live Editor Panel */
-        textarea { flex: 1; width: 100%; resize: none; font-family: 'Fira Code', 'Courier New', monospace; font-size: 12px; padding: 12px; border: 1px solid #ddd; border-radius: 4px; background: #1e1e1e; color: #d4d4d4; line-height: 1.5; }
-        textarea:focus { outline: 2px solid #2563eb; }
+        #canvasFrame { flex: 1; border: 2px solid black; position: relative; background: #fff; cursor: crosshair; }
+        svg { width: 100%; height: 100%; position: absolute; }
     </style>
 </head>
 <body>
 
-    <h1>Pixel-to-Pixel SVG Drawing Workspace</h1>
-    
-    <div class="container">
-        <!-- Left Panel: Grid Matrix Painting Surface -->
-        <div class="panel">
-            <div class="panel-title">
-                <span>Discrete Grid Surface</span>
-                <div class="controls">
-                    <label for="gridSize">Pixel Size:</label>
-                    <select id="gridSize">
-                        <option value="5">5px</option>
-                        <option value="10" selected>10px</option>
-                        <option value="20">20px</option>
-                        <option value="40">40px</option>
-                    </select>
-                    <input type="color" id="colorPicker" value="#10b981">
-                    <button class="btn btn-clear" id="clearBtn">Clear</button>
-                </div>
-            </div>
-            <div class="canvas-container" id="canvasWrapper">
-                <svg id="pixelSvg" xmlns="http://w3.org">
-                    <!-- Dynamic Grid Background Pattern -->
-                    <defs>
-                        <pattern id="gridPattern" width="10" height="10" patternUnits="userSpaceOnUse">
-                            <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e5e7eb" stroke-width="0.5"/>
-                        </pattern>
-                    </defs>
-                    <rect width="100%" height="100%" fill="url(#gridPattern)" pointer-events="none" />
-                    
-                    <!-- Drawn elements live inside this group -->
-                    <g id="pixelGroup"></g>
-                </svg>
-            </div>
-        </div>
-        
-        <!-- Right Panel: Synchronized Realtime SVG Text Representation -->
-        <div class="panel">
-            <div class="panel-title">
-                <span>Realtime Code Output</span>
-                <button class="btn" id="importBtn">Sync Code to Canvas</button>
-            </div>
-            <textarea id="svgOutput" placeholder="SVG XML tree mapping will render here..."></textarea>
-        </div>
+    <div class="controls">
+        <input type="file" id="loader" accept=".svg,.jpg,.jpeg,.png">
+        <label><input type="checkbox" id="snap"> Snap Straight (0°/90°)</label>
+        <button id="saveBtn" style="margin-left:auto; background: green; color: white;">💾 Save SVG</button>
+    </div>
+
+    <div id="canvasFrame">
+        <svg id="box">
+            <!-- Layers for background assets and live user artwork -->
+            <g id="bg"></g>
+            <g id="art"></g>
+            <line id="preview" stroke="red" stroke-width="2" stroke-dasharray="4" style="display:none"></line>
+        </svg>
     </div>
 
     <script>
-        const svg = document.getElementById('pixelSvg');
-        const group = document.getElementById('pixelGroup');
-        const outputText = document.getElementById('svgOutput');
-        const wrapper = document.getElementById('canvasWrapper');
-        const colorPicker = document.getElementById('colorPicker');
-        const clearBtn = document.getElementById('clearBtn');
-        const importBtn = document.getElementById('importBtn');
-        const gridSizeSelect = document.getElementById('gridSize');
-        const gridPattern = document.getElementById('gridPattern');
+        const box = document.getElementById('box');
+        const art = document.getElementById('art');
+        const bg = document.getElementById('bg');
+        const preview = document.getElementById('preview');
+        const frame = document.getElementById('canvasFrame');
+        const snap = document.getElementById('snap');
 
-        let isPainting = false;
-        let pSize = parseInt(gridSizeSelect.value);
-        let filledPixels = new Set(); // Prevents drawing duplicates on the same coordinate block
+        let drawing = false, startX = 0, startY = 0;
 
-        // --- Handle Pixel Grid Sizing Adjustments ---
-        gridSizeSelect.addEventListener('change', (e) => {
-            pSize = parseInt(e.target.value);
-            gridPattern.setAttribute('width', pSize);
-            gridPattern.setAttribute('height', pSize);
-            gridPattern.querySelector('path').setAttribute('d', `M ${pSize} 0 L 0 0 0 ${pSize}`);
-        });
+        // Get coordinates relative to the canvas boundary box
+        const getXY = (e) => {
+            const r = box.getBoundingClientRect();
+            return { x: Math.round(e.clientX - r.left), y: Math.round(e.clientY - r.top) };
+        };
 
-        // --- Core Snapping Logic ---
-        function drawPixelAt(e) {
-            const rect = svg.getBoundingClientRect();
-            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-            
-            // Calculate mouse coordinates relative to SVG canvas boundary
-            const rawX = clientX - rect.left;
-            const rawY = clientY - rect.top;
-            
-            // Quantize / Snap coordinates directly down to the nearest grid step
-            const snappedX = Math.floor(rawX / pSize) * pSize;
-            const snappedY = Math.floor(rawY / pSize) * pSize;
-            
-            // Unique key to track painted cells and prevent code clutter
-            const coordinateKey = `${snappedX},${snappedY}`;
-            
-            if (!filledPixels.has(coordinateKey)) {
-                filledPixels.add(coordinateKey);
-                
-                // Create SVG element representation representing a discrete grid block
-                const pixelNode = document.createElementNS("http://w3.org", "rect");
-                pixelNode.setAttribute("x", snappedX);
-                pixelNode.setAttribute("y", snappedY);
-                pixelNode.setAttribute("width", pSize);
-                pixelNode.setAttribute("height", pSize);
-                pixelNode.setAttribute("fill", colorPicker.value);
-                
-                group.appendChild(pixelNode);
-                serializeSvgTree();
+        // Pointer Controls (Handles Touch, Mouse, and Stylus automatically)
+        frame.onpointerdown = (e) => {
+            if (e.target.closest('.controls')) return;
+            drawing = true;
+            const p = getXY(e);
+            startX = p.x; startY = p.y;
+            preview.setAttribute('x1', startX); preview.setAttribute('y1', startY);
+            preview.style.display = 'block';
+        };
+
+        window.onpointermove = (e) => {
+            if (!drawing) return;
+            const p = getXY(e);
+            let endX = p.x, endY = p.y;
+
+            // Straight Line Logic: Force the line to lock horizontally or vertically
+            if (snap.checked) {
+                if (Math.abs(endX - startX) > Math.abs(endY - startY)) endY = startY;
+                else endX = startX;
             }
-        }
 
-        // --- Event Routing Handlers ---
-        function startAction(e) {
-            isPainting = true;
-            drawPixelAt(e);
-        }
+            preview.setAttribute('x2', endX); preview.setAttribute('y2', endY);
+        };
 
-        function moveAction(e) {
-            if (!isPainting) return;
-            e.preventDefault(); // Inhibits mobile touch-drag screen panning
-            drawPixelAt(e);
-        }
+        window.onpointerup = (e) => {
+            if (!drawing) return;
+            drawing = false;
+            preview.style.display = 'none';
 
-        function stopAction() {
-            isPainting = false;
-        }
+            const x2 = preview.getAttribute('x2'), y2 = preview.getAttribute('y2');
+            if (startX != x2 || startY != y2) {
+                const n = document.createElementNS("http://w3.org", "line");
+                n.setAttribute('x1', startX); n.setAttribute('y1', startY);
+                n.setAttribute('x2', x2);     n.setAttribute('y2', y2);
+                n.setAttribute('stroke', 'black'); n.setAttribute('stroke-width', '3');
+                art.appendChild(n);
+            }
+        };
 
-        // --- Two-Way Core Synchronization Engine ---
-        function serializeSvgTree() {
-            const serializer = new XMLSerializer();
-            let rawXml = serializer.serializeToString(svg);
-            
-            // Apply formatting spacing tweaks to nested tags for clean readability
-            rawXml = rawXml
-                .replace(/></g, '>\n  <')
-                .replace('</svg>', '\n</svg>')
-                .replace('<g', '\n  <g')
-                .replace('</g>', '\n  </g>');
-                
-            outputText.value = rawXml;
-        }
+        // File Importer (Handles raw code parsing or trace-overlay generation)
+        document.getElementById('loader').onchange = (e) => {
+            const f = e.target.files[0];
+            if (!f) return;
+            const r = new FileReader();
 
-        function deserializeInputCode() {
-            const parser = new DOMParser();
-            const parsedDOM = parser.parseFromString(outputText.value, "image/svg+xml");
-            const structuralGroup = parsedDOM.getElementById('pixelGroup') || parsedDOM.querySelector('g');
-            
-            if (structuralGroup && parsedDOM.documentElement.nodeName !== "parsererror") {
-                group.innerHTML = '';
-                filledPixels.clear();
-                
-                const elements = Array.from(structuralGroup.children);
-                elements.forEach(node => {
-                    const tag = node.tagName.toLowerCase();
-                    if(['rect', 'path', 'circle'].includes(tag)) {
-                        group.appendChild(document.importNode(node, true));
-                        
-                        // If it's a grid block rectangle, register its footprint coordinates
-                        if(tag === 'rect' && node.hasAttribute('x') && node.hasAttribute('y')) {
-                            const x = Math.floor(parseFloat(node.getAttribute('x')));
-                            const y = Math.floor(parseFloat(node.getAttribute('y')));
-                            filledPixels.add(`${x},${y}`);
-                        }
-                    }
-                });
+            if (f.type.includes('svg')) {
+                r.onload = (ev) => {
+                    const parsed = new DOMParser().parseFromString(ev.target.result, "image/svg+xml");
+                    Array.from(parsed.documentElement.children).forEach(n => bg.appendChild(document.importNode(n, true)));
+                };
+                r.readAsText(f);
             } else {
-                alert("Parsing Failure: Verify your SVG snippet structure contains valid node closures.");
+                r.onload = (ev) => {
+                    const img = document.createElementNS("http://w3.org", "image");
+                    img.setAttributeNS('http://w3.org', 'href', ev.target.result);
+                    img.setAttribute('width', '100%'); img.setAttribute('height', '100%');
+                    bg.innerHTML = ''; bg.appendChild(img);
+                };
+                r.readAsDataURL(f);
             }
-        }
+        };
 
-        // --- Desktop Mouse Inputs ---
-        wrapper.addEventListener('mousedown', startAction);
-        window.addEventListener('mousemove', moveAction);
-        window.addEventListener('mouseup', stopAction);
-
-        // --- Mobile Touch Screen Inputs ---
-        wrapper.addEventListener('touchstart', startAction, { passive: false });
-        window.addEventListener('touchmove', moveAction, { passive: false });
-        window.addEventListener('touchend', stopAction);
-
-        // --- Peripheral UI Control Intersections ---
-        clearBtn.addEventListener('click', () => {
-            group.innerHTML = '';
-            filledPixels.clear();
-            serializeSvgTree();
-        });
-        
-        importBtn.addEventListener('click', deserializeInputCode);
-
+        // Save File Export Pipeline
+        document.getElementById('saveBtn').onclick = () => {
+            const blob = new Blob([new XMLSerializer().serializeToString(box)], {type: "image/svg+xml"});
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "drawing.svg";
+            a.click();
+        };
+    </script>
+</body>
+</html>
