@@ -11,7 +11,7 @@
 </head>
 <body>
 
-    <h2>Image to JavaScript Canvas Vector Path Script Generator</h2>
+    <h2>Image to JavaScript Canvas Line API Script</h2>
     <div class="drop-box" id="drop">Click or Drop Image Here to Generate Vector Paths</div>
     <input type="file" id="file" accept="image/*" style="display:none">
     
@@ -25,8 +25,8 @@
         drop.onclick = () => file.click();
         drop.ondragover = (e) => e.preventDefault();
         
-        drop.ondrop = (e) => { e.preventDefault(); if(e.dataTransfer.files.length) process(e.dataTransfer.files); };
-        file.onchange = (e) => { if(e.target.files.length) process(e.target.files); };
+        drop.ondrop = (e) => { e.preventDefault(); if(e.dataTransfer.files.length) process(e.dataTransfer.files[0]); };
+        file.onchange = (e) => { if(e.target.files.length) process(e.target.files[0]); };
 
         function process(targetFile) {
             if (!targetFile) return;
@@ -42,11 +42,13 @@
                 try {
                     const imgData = ctx.getImageData(0, 0, img.width, img.height).data;
                     
-                    let apiScript = `// JavaScript Canvas API Line Rendering Script\n`;
-                    apiScript += `// Setup boilerplate:\n`;
-                    apiScript += `// var c = document.getElementById("myCanvas");\n`;
-                    apiScript += `// var ctx = c.getContext("2d");\n`;
-                    apiScript += `ctx.lineWidth = 1; // Explicit 1-pixel thickness constraint\n\n`;
+                    // Pre-allocate memory using an array buffer stack
+                    let scriptLines = [
+                        `// JavaScript Canvas API Line Rendering Script`,
+                        `// var c = document.getElementById("myCanvas");`,
+                        `// var ctx = c.getContext("2d");`,
+                        `ctx.lineWidth = 1;\n`
+                    ];
                     
                     for (let y = 0; y < img.height; y++) {
                         let runStart = 0;
@@ -55,22 +57,24 @@
 
                         for (let x = 0; x < img.width; x++) {
                             const idx = (y * img.width + x) * 4;
-                            const r = imgData[idx];
-                            const g = imgData[idx + 1];
-                            const b = imgData[idx + 2];
                             const a = imgData[idx + 3];
 
-                            let hex = "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
-                            if (a < 255 && a > 0) {
-                                hex += a.toString(16).padStart(2, '0').toUpperCase();
+                            let hex = "";
+                            if (a > 0) {
+                                const r = imgData[idx];
+                                const g = imgData[idx + 1];
+                                const b = imgData[idx + 2];
+                                hex = "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+                                if (a < 255) {
+                                    hex += a.toString(16).padStart(2, '0').toUpperCase();
+                                }
                             }
 
                             if (inRun) {
                                 if (a > 0 && hex === runColor) {
                                     continue; 
                                 } else {
-                                    // Sequence broken: write the line path execution out to text buffer
-                                    apiScript += writeVectorLine(runStart, x, y, runColor);
+                                    scriptLines.push(`ctx.strokeStyle = "${runColor}"; ctx.beginPath(); ctx.moveTo(${runStart}.0, ${(y + 0.5).toFixed(1)}); ctx.lineTo(${x}.0, ${(y + 0.5).toFixed(1)}); ctx.stroke();`);
                                     inRun = false;
                                 }
                             }
@@ -83,27 +87,21 @@
                         }
 
                         if (inRun) {
-                            apiScript += writeVectorLine(runStart, img.width, y, runColor);
+                            scriptLines.push(`ctx.strokeStyle = "${runColor}"; ctx.beginPath(); ctx.moveTo(${runStart}.0, ${(y + 0.5).toFixed(1)}); ctx.lineTo(${img.width}.0, ${(y + 0.5).toFixed(1)}); ctx.stroke();`);
                         }
                     }
 
-                    output.value = apiScript;
+                    // Fast single-pass string joining to prevent memory bloat crashes
+                    output.value = scriptLines.join("\n");
                     drop.innerText = `Successfully Generated Vector Path Script (${img.width}x${img.height}px)`;
+                    URL.revokeObjectURL(img.src);
                 } catch (err) {
                     output.value = "// Error building Canvas Vector instructions: " + err.message;
                 }
             };
 
+            // Safe isolated reader pipeline instantiation
             img.src = URL.createObjectURL(targetFile);
-        }
-
-        // Helper function that writes clean, grid-aligned vector operations 
-        // 0.5 coordinates offset alignment eliminates sub-pixel scaling blur
-        function writeVectorLine(xStart, xEnd, y, color) {
-            const centerY = (y + 0.5).toFixed(1);
-            const startX = xStart.toFixed(1);
-            const endX = xEnd.toFixed(1);
-            return `ctx.strokeStyle = "${color}"; ctx.beginPath(); ctx.moveTo(${startX}, ${centerY}); ctx.lineTo(${endX}, ${centerY}); ctx.stroke();\n`;
         }
     </script>
 
