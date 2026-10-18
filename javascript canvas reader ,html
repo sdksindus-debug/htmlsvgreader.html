@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Image to JavaScript Canvas API Script</title>
+    <style>
+        body { font-family: monospace; max-width: 800px; margin: 20px auto; padding: 0 20px; }
+        .drop-box { border: 2px dashed #333; padding: 30px; text-align: center; cursor: pointer; background: #f9f9f9; }
+        textarea { width: 100%; height: 450px; background: #1e1e1e; color: #4af626; padding: 15px; box-sizing: border-box; font-family: monospace; font-size: 11px; border-radius: 4px; border: 1px solid #000; margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+    <h2>Image to JavaScript Canvas API Script Generator</h2>
+    <div class="drop-box" id="drop">Click or Drop Image Here to Generate API Code</div>
+    <input type="file" id="file" accept="image/*" style="display:none">
+    
+    <textarea id="output" readonly placeholder="The generated JavaScript Canvas API script code will print here..."></textarea>
+
+    <script>
+        const drop = document.getElementById('drop');
+        const file = document.getElementById('file');
+        const output = document.getElementById('output');
+
+        drop.onclick = () => file.click();
+        drop.ondragover = (e) => e.preventDefault();
+        
+        drop.ondrop = (e) => { e.preventDefault(); if(e.dataTransfer.files.length) process(e.dataTransfer.files[0]); };
+        file.onchange = (e) => { if(e.target.files.length) process(e.target.files[0]); };
+
+        function process(targetFile) {
+            if (!targetFile) return;
+            
+            const img = new Image();
+            img.onload = function() {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+
+                try {
+                    const imgData = ctx.getImageData(0, 0, img.width, img.height).data;
+                    
+                    // Initialize the functional JavaScript Canvas API script text string
+                    let apiScript = `// JavaScript Canvas API Rendering Script\n`;
+                    apiScript += `// Setup code snippet:\n`;
+                    apiScript += `// var c = document.getElementById("myCanvas");\n`;
+                    apiScript += `// var ctx = c.getContext("2d");\n\n`;
+                    
+                    // Group matching rows to optimize drawing calls
+                    for (let y = 0; y < img.height; y++) {
+                        let runStart = 0;
+                        let runColor = "";
+                        let inRun = false;
+
+                        for (let x = 0; x < img.width; x++) {
+                            const idx = (y * img.width + x) * 4;
+                            const r = imgData[idx];
+                            const g = imgData[idx + 1];
+                            const b = imgData[idx + 2];
+                            const a = imgData[idx + 3];
+
+                            // Determine Hex color string layout format matching our current pointer state
+                            let hex = "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+                            if (a < 255 && a > 0) {
+                                // Convert 0-255 Alpha to a functional CSS hex-alpha representation
+                                hex += a.toString(16).padStart(2, '0').toUpperCase();
+                            }
+
+                            if (inRun) {
+                                if (a > 0 && hex === runColor) {
+                                    continue; // Pixel matches, extend tracking window width
+                                } else {
+                                    // Sequence broken or hit transparency: write current API context call out to text buffer
+                                    apiScript += `ctx.fillStyle = "${runColor}"; ctx.fillRect(${runStart}, ${y}, ${x - runStart}, 1);\n`;
+                                    inRun = false;
+                                }
+                            }
+
+                            if (a > 0) {
+                                runStart = x;
+                                runColor = hex;
+                                inRun = true;
+                            }
+                        }
+
+                        // Catch lingering patterns at the right boundary edge of the grid
+                        if (inRun) {
+                            apiScript += `ctx.fillStyle = "${runColor}"; ctx.fillRect(${runStart}, ${y}, ${img.width - runStart}, 1);\n`;
+                        }
+                    }
+
+                    output.value = apiScript;
+                    drop.innerText = `Successfully Generated API Script (${img.width}x${img.height}px)`;
+                } catch (err) {
+                    output.value = "// Error building Canvas API instructions: " + err.message;
+                }
+            };
+
+            img.src = URL.createObjectURL(targetFile);
+        }
+    </script>
+
+</body>
+</html>
