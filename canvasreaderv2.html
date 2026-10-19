@@ -211,15 +211,10 @@
         const downloadHtml = html.join('\n');
         lastDownloadHtml = downloadHtml;
 
-        // For display in the textarea keep the original JS-only lines (useful for copying)
-        const displayScript = [];
-        displayScript.push('// Generated Canvas Line Script (JS lines only)');
-        displayScript.push('// Wrap these in a canvas context: const c = document.getElementById("myCanvas"); const ctx = c.getContext("2d");');
-        displayScript.push('ctx.lineWidth = 1;');
-        displayScript.push(...scriptLines);
+        // Show the full HTML wrapper in the textarea so Copy/Download use the same content
+        output.value = downloadHtml;
 
-        output.value = displayScript.join('\n');
-        setMeta(`Successfully generated script (${w}×${h}). You can Download the HTML file or Copy the JS lines.`);
+        setMeta(`Successfully generated script (${w}×${h}). You can Download the HTML file or Copy the full HTML.`);
       } catch (err) {
         console.error(err);
         output.value = `// Error building Canvas Vector instructions: ${err && err.message}`;
