@@ -21,10 +21,6 @@
   <div class="controls">
     <button id="copyBtn">Copy Script</button>
     <button id="downloadBtn">Download Script</button>
-    <label style="margin-left:auto">
-      Alpha threshold:
-      <input id="alphaThresh" type="number" min="0" max="255" value="1" style="width:64px" />
-    </label>
   </div>
 
   <canvas id="preview" class="preview" width="0" height="0" style="display:none"></canvas>
@@ -41,9 +37,9 @@
   const meta = document.getElementById('meta');
   const copyBtn = document.getElementById('copyBtn');
   const downloadBtn = document.getElementById('downloadBtn');
-  const alphaThreshInput = document.getElementById('alphaThresh');
 
   let currentObjectUrl = null;
+  let lastDownloadHtml = null;
 
   function setMeta(text) { meta.textContent = text || ''; }
 
@@ -93,11 +89,15 @@
   });
 
   downloadBtn.addEventListener('click', () => {
-    const blob = new Blob([output.value || ''], { type: 'text/javascript' });
+    // If we have a prepared HTML download, use it. Otherwise fall back to raw JS text.
+    const content = lastDownloadHtml || output.value || '';
+    const filename = lastDownloadHtml ? 'canvas-lines.html' : 'canvas-lines.js';
+    const type = lastDownloadHtml ? 'text/html' : 'text/javascript';
+    const blob = new Blob([content], { type });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'canvas-lines.js';
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -115,6 +115,7 @@
     revokeCurrentUrl();
     clearPreview();
     output.value = '';
+    lastDownloadHtml = null;
     setMeta('Loading image...');
     const objectUrl = URL.createObjectURL(file);
     currentObjectUrl = objectUrl;
@@ -139,12 +140,11 @@
         ctx.drawImage(img, 0, 0);
 
         const imageData = ctx.getImageData(0, 0, w, h).data;
-        const threshold = Number(alphaThreshInput.value) || 1;
 
         const scriptLines = [
           '// Generated Canvas Line Script',
-          '// Usage: const c = document.getElementById("myCanvas"); const ctx = c.getContext("2d");',
-          'ctx.lineWidth = 1;'
+          '// Usage: this file creates a canvas with id "myCanvas" and draws the lines.',
+          ''
         ];
 
         // scan rows and aggregate contiguous runs of same RGBA
@@ -158,7 +158,8 @@
             const a = inside ? imageData[idx + 3] : 0;
             let color = null;
 
-            if (inside && a >= threshold) {
+            // treat any pixel with alpha > 0 as filled
+            if (inside && a > 0) {
               const r = imageData[idx];
               const g = imageData[idx + 1];
               const b = imageData[idx + 2];
@@ -188,8 +189,37 @@
           }
         }
 
-        output.value = scriptLines.join('\n');
-        setMeta(`Successfully generated script (${w}×${h}).`);
+        // Build a wrapped HTML file for download that creates a canvas and runs the drawing commands
+        const html = [];
+        html.push('<!DOCTYPE html>');
+        html.push('<html lang="en">');
+        html.push('<head><meta charset="utf-8"><title>Canvas Lines</title></head>');
+        html.push('<body>');
+        html.push(`<canvas id="myCanvas" width="${w}" height="${h}"></canvas>`);
+        html.push('<script>');
+        html.push('(function(){');
+        html.push('  const c = document.getElementById("myCanvas");');
+        html.push('  const ctx = c.getContext("2d");');
+        html.push('  ctx.lineWidth = 1;');
+        // append drawing commands
+        for (const line of scriptLines) html.push('  ' + line);
+        html.push('})();');
+        html.push('<\/script>');
+        html.push('</body>');
+        html.push('</html>');
+
+        const downloadHtml = html.join('\n');
+        lastDownloadHtml = downloadHtml;
+
+        // For display in the textarea keep the original JS-only lines (useful for copying)
+        const displayScript = [];
+        displayScript.push('// Generated Canvas Line Script (JS lines only)');
+        displayScript.push('// Wrap these in a canvas context: const c = document.getElementById("myCanvas"); const ctx = c.getContext("2d");');
+        displayScript.push('ctx.lineWidth = 1;');
+        displayScript.push(...scriptLines);
+
+        output.value = displayScript.join('\n');
+        setMeta(`Successfully generated script (${w}×${h}). You can Download the HTML file or Copy the JS lines.`);
       } catch (err) {
         console.error(err);
         output.value = `// Error building Canvas Vector instructions: ${err && err.message}`;
