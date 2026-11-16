@@ -1,647 +1,325 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Optimized Pixel Reader to SVG Script</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pixel Reader &amp; SVG Glitch Lab</title>
     <style>
         :root {
-            --bg: #0f1117;
-            --panel: #181d27;
-            --panel-2: #212938;
-            --text: #e6edf7;
-            --muted: #96a7c5;
-            --accent: #7fdeff;
-            --accent-2: #ff5f7d;
-            --shadow: rgba(0,0,0,0.35);
+            --olive: #999918;
+            --ochre: #BAAA44;
+            --gold: #9C6400;
+            --sand: #E3D05C;
+            --yellow: #FCE957;
+            --red: #952222;
+            --lime: #CECE06;
+            --green: #09AF0B;
+            --paper: #fffdf2;
+            --ink: #292714;
+            --muted: #625e35;
+            --line: rgba(41, 39, 20, .18);
+            --shadow: rgba(65, 58, 18, .14);
         }
 
         * { box-sizing: border-box; }
-
         body {
             margin: 0;
             padding: 24px;
-            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #0b0d12, #161d2b 50%, #0d1118);
-            color: var(--text);
+            color: var(--ink);
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            background-color: #faf8ea;
+            background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+            background-size: 36px 36px;
         }
-
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        .toolbar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-
+        .container { max-width: 1200px; margin: 0 auto; }
+        header { margin: 0 0 18px; }
+        h1 { margin: 0 0 6px; font-size: clamp(24px, 4vw, 36px); color: var(--olive); }
+        .intro { margin: 0; color: var(--muted); }
+        .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; margin: 20px 0; }
         .drop-box {
-            flex: 1;
-            min-width: 260px;
-            border: 2px dashed var(--accent);
-            border-radius: 14px;
-            padding: 24px 20px;
-            text-align: center;
-            cursor: pointer;
-            background: rgba(127, 222, 255, 0.07);
-            color: var(--text);
-            transition: 0.2s ease;
-            user-select: none;
+            flex: 1; min-width: 260px; padding: 22px; text-align: center; cursor: pointer;
+            border: 2px dashed var(--olive); border-radius: 12px; background: var(--paper); color: var(--ink);
+            box-shadow: 0 5px 16px var(--shadow); user-select: none;
         }
-
-        .drop-box:hover {
-            background: rgba(127, 222, 255, 0.12);
-        }
-
-        button {
-            border: none;
-            border-radius: 10px;
-            padding: 12px 18px;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--accent), #7cb5ff);
-            color: #07111d;
-            cursor: pointer;
-            box-shadow: 0 8px 20px rgba(124, 181, 255, 0.25);
-        }
-
-        button.secondary {
-            background: linear-gradient(135deg, #ff9d5c, #ff5f7d);
-            color: #1a0d12;
-            box-shadow: 0 8px 20px rgba(255, 95, 125, 0.2);
-        }
-
+        .drop-box:hover { background: #fff8cc; }
         #file { display: none; }
-
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-            gap: 18px;
-            margin-bottom: 20px;
+        button {
+            border: 1px solid var(--olive); border-radius: 9px; padding: 11px 15px; font-weight: 700;
+            background: var(--olive); color: white; cursor: pointer;
         }
-
-        .panel {
-            background: rgba(24, 29, 39, 0.9);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 16px;
-            padding: 12px;
-            box-shadow: 0 16px 28px var(--shadow);
+        button:hover { filter: brightness(.94); }
+        button.secondary { background: var(--red); border-color: var(--red); }
+        button.green { background: var(--green); border-color: var(--green); color: #10220e; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 18px; }
+        .panel, .variant-card {
+            padding: 12px; background: var(--paper); border: 1px solid var(--ochre); border-radius: 13px;
+            box-shadow: 0 7px 20px var(--shadow);
         }
-
-        .panel h3 {
-            margin: 0 0 10px;
-            color: var(--muted);
-            font-size: 13px;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
+        .panel h2, .variants h2 { margin: 0 0 10px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--olive); }
+        .image-wrap, .thumb {
+            min-height: 210px; display: grid; place-items: center; overflow: auto; border: 1px solid var(--line);
+            border-radius: 9px; background-color: white;
+            background-image: linear-gradient(45deg, #eee 25%, transparent 25%), linear-gradient(-45deg, #eee 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #eee 75%), linear-gradient(-45deg, transparent 75%, #eee 75%);
+            background-size: 18px 18px; background-position: 0 0, 0 9px, 9px -9px, -9px 0;
         }
-
-        .image-wrap {
-            width: 100%;
-            min-height: 220px;
-            display: grid;
-            place-items: center;
-            background: #0d1117;
-            border-radius: 12px;
-            overflow: hidden;
-            border: 1px solid rgba(255,255,255,0.08);
-        }
-
-        .image-wrap img, .image-wrap svg {
-            max-width: 100%;
-            max-height: 300px;
-            display: block;
-        }
-
+        .image-wrap img { max-width: 100%; max-height: 320px; display: block; }
         textarea {
-            width: 100%;
-            min-height: 360px;
-            resize: vertical;
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 14px;
-            background: rgba(11,13,18,0.82);
-            color: #abffab;
-            padding: 14px 16px;
-            font-family: "Consolas", "Courier New", monospace;
-            font-size: 12px;
-            line-height: 1.45;
-            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+            width: 100%; min-height: 300px; resize: vertical; padding: 14px; border: 1px solid var(--olive); border-radius: 11px;
+            color: #f7f4df; background: #292714; font: 12px/1.5 Consolas, monospace;
         }
-
-        .variants {
-            margin-top: 22px;
-        }
-
-        .variants h3 {
-            margin: 0 0 12px;
-            color: var(--muted);
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            font-size: 13px;
-        }
-
-        .variant-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 18px;
-        }
-
-        .variant-card {
-            background: rgba(24, 29, 39, 0.9);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 16px;
-            padding: 12px;
-            overflow: hidden;
-        }
-
-        .variant-card h4 {
-            margin: 0 0 8px;
-            font-size: 14px;
-            color: var(--text);
-        }
-
-        .variant-card .meta {
-            display: flex;
-            justify-content: space-between;
-            gap: 8px;
-            align-items: center;
-            margin-bottom: 10px;
-            color: var(--muted);
-            font-size: 12px;
-        }
-
-        .variant-card .thumb {
-            width: 100%;
-            min-height: 160px;
-            display: grid;
-            place-items: center;
-            background: #0d1117;
-            border-radius: 10px;
-            overflow: hidden;
-            border: 1px solid rgba(255,255,255,0.08);
-        }
-
-        .variant-card .thumb img {
-            max-width: 100%;
-            max-height: 220px;
-            display: block;
-        }
-
-        .variant-actions {
-            display: flex;
-            gap: 8px;
-            margin-top: 12px;
-            flex-wrap: wrap;
-        }
-
-        .mini-btn {
-            padding: 9px 12px;
-            font-size: 12px;
-            border-radius: 8px;
-        }
-
-        .hidden {
-            display: none !important;
-        }
+        .variants { margin-top: 20px; }
+        .variant-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+        .variant-card { overflow: hidden; }
+        .variant-card h3 { margin: 0; color: var(--ink); font-size: 15px; }
+        .variant-card .meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 9px; color: var(--muted); font-size: 12px; }
+        .thumb { min-height: 160px; }
+        .thumb img { max-width: 100%; max-height: 220px; display: block; }
+        .variant-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+        .mini-btn { padding: 8px 11px; font-size: 12px; }
+        .palette { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 16px; }
+        .swatch { width: 27px; height: 18px; border: 1px solid rgba(0,0,0,.2); border-radius: 3px; }
+        @media (max-width: 560px) { body { padding: 14px; } .toolbar button { flex: 1; } }
     </style>
 </head>
 <body>
-    <div class="container">
+    <main class="container">
+        <header>
+            <h1>Pixel Reader &amp; SVG Glitch Lab</h1>
+            <p class="intro">Extract image pixels as SVG rectangles, create glitch variations, and download SVG or PNG previews.</p>
+            <div class="palette" aria-label="Active color palette">
+                <span class="swatch" title="#999918" style="background:#999918"></span>
+                <span class="swatch" title="#BAAA44" style="background:#BAAA44"></span>
+                <span class="swatch" title="#9C6400" style="background:#9C6400"></span>
+                <span class="swatch" title="#E3D05C" style="background:#E3D05C"></span>
+                <span class="swatch" title="#FCE957" style="background:#FCE957"></span>
+                <span class="swatch" title="#952222" style="background:#952222"></span>
+                <span class="swatch" title="#CECE06" style="background:#CECE06"></span>
+                <span class="swatch" title="#09AF0B" style="background:#09AF0B"></span>
+            </div>
+        </header>
+
         <div class="toolbar">
-            <div class="drop-box" id="drop">Click or Drop Image Here to Extract Pixels, Glitch the Rectangles, and Preview SVG Variants</div>
+            <div class="drop-box" id="drop">Click or drop an image here to extract pixels and generate glitch previews</div>
             <input type="file" id="file" accept="image/*">
-            <button id="glitchButton" type="button">Generate Glitch Variants</button>
+            <button id="glitchButton" type="button">Regenerate Glitches</button>
             <button id="downloadCurrentSvg" class="secondary" type="button">Download Current SVG</button>
-            <button id="downloadCurrentPng" type="button">Download Current PNG</button>
+            <button id="downloadCurrentPng" class="green" type="button">Download Current PNG</button>
         </div>
 
-        <div class="grid">
-            <div class="panel">
-                <h3>Original Image</h3>
-                <div class="image-wrap">
-                    <img id="originalPreview" alt="Original preview" />
-                </div>
-            </div>
-
-            <div class="panel">
-                <h3>Base SVG Preview</h3>
-                <div class="image-wrap" id="svgPreviewWrap">
-                    <img id="svgPreview" alt="SVG preview" />
-                </div>
-            </div>
-        </div>
-
-        <textarea id="output" readonly placeholder="Optimized SVG vector element script will print here..."></textarea>
-
-        <div class="variants">
-            <h3>Glitched Rectangle Variants</h3>
-            <div id="variantGrid" class="variant-grid"></div>
-        </div>
-    </div>
+        <section class="grid" aria-label="Image previews">
+            <article class="panel"><h2>Original Image</h2><div class="image-wrap"><img id="originalPreview" alt="Original image preview"></div></article>
+            <article class="panel"><h2>Selected SVG Preview</h2><div class="image-wrap"><img id="svgPreview" alt="Selected SVG preview"></div></article>
+        </section>
+        <textarea id="output" readonly placeholder="Extracted or selected SVG markup will appear here..."></textarea>
+        <section class="variants"><h2>Glitched Rectangle Variants</h2><div id="variantGrid" class="variant-grid"></div></section>
+    </main>
 
     <script>
+        const PALETTE = ['#999918', '#BAAA44', '#9C6400', '#E3D05C', '#FCE957', '#952222', '#CECE06', '#09AF0B'];
         const drop = document.getElementById('drop');
         const file = document.getElementById('file');
         const output = document.getElementById('output');
         const originalPreview = document.getElementById('originalPreview');
         const svgPreview = document.getElementById('svgPreview');
         const variantGrid = document.getElementById('variantGrid');
-        const glitchButton = document.getElementById('glitchButton');
-        const downloadCurrentSvg = document.getElementById('downloadCurrentSvg');
-        const downloadCurrentPng = document.getElementById('downloadCurrentPng');
-
-        let currentOriginalUrl = '';
-        let currentSourceSvg = '';
-        let currentVariantSvg = '';
+        let currentSvg = '';
         let imageWidth = 0;
         let imageHeight = 0;
         let extractedRects = [];
-        let variantList = [];
+        let variants = [];
 
-        drop.onclick = () => file.click();
-        drop.ondragover = (e) => e.preventDefault();
-        drop.ondrop = (e) => {
-            e.preventDefault();
-            const selected = e.dataTransfer.files && e.dataTransfer.files[0];
-            if (selected) process(selected);
-        };
-        file.onchange = (e) => {
-            const selected = e.target.files && e.target.files[0];
-            if (selected) process(selected);
-        };
-        glitchButton.onclick = () => generateVariants();
+        drop.addEventListener('click', () => file.click());
+        drop.addEventListener('dragover', (event) => event.preventDefault());
+        drop.addEventListener('drop', (event) => {
+            event.preventDefault();
+            if (event.dataTransfer.files[0]) processImage(event.dataTransfer.files[0]);
+        });
+        file.addEventListener('change', (event) => {
+            if (event.target.files[0]) processImage(event.target.files[0]);
+        });
+        document.getElementById('glitchButton').addEventListener('click', generateVariants);
+        document.getElementById('downloadCurrentSvg').addEventListener('click', () => {
+            if (currentSvg) downloadBlob(currentSvg, 'glitched-image.svg', 'image/svg+xml');
+        });
+        document.getElementById('downloadCurrentPng').addEventListener('click', async () => {
+            if (!currentSvg) return;
+            try { downloadBlob(await svgToPng(currentSvg), 'glitched-image.png', 'image/png'); }
+            catch (error) { alert('Could not export PNG: ' + error.message); }
+        });
 
-        downloadCurrentSvg.onclick = () => {
-            if (!currentVariantSvg) return;
-            triggerDownload(currentVariantSvg, 'glitched-svg.svg', 'image/svg+xml');
-        };
-
-        downloadCurrentPng.onclick = () => {
-            if (!currentVariantSvg) return;
-            svgToPngDataUrl(currentVariantSvg).then((pngUrl) => {
-                triggerDownload(pngUrl, 'glitched-preview.png', 'image/png');
-            });
-        };
-
-        function process(selectedFile) {
-            if (!selectedFile) return;
-
-            const reader = new FileReader();
-            reader.onload = function (event) {
-                const url = event.target.result;
-                const img = new Image();
-                img.onload = function () {
-                    imageWidth = img.width;
-                    imageHeight = img.height;
-                    currentOriginalUrl = url;
-                    originalPreview.src = url;
-                    originalPreview.style.display = 'block';
-
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    ctx.drawImage(img, 0, 0);
-
-                    try {
-                        const imgData = ctx.getImageData(0, 0, img.width, img.height).data;
-                        extractedRects = extractRectanglesFromImageData(imgData, img.width, img.height);
-                        currentSourceSvg = buildSvgFromRects(extractedRects, img.width, img.height, {
-                            background: '#000000',
-                            withText: false
-                        });
-                        output.value = currentSourceSvg;
-                        renderSvgPreview(currentSourceSvg);
-                        currentVariantSvg = currentSourceSvg;
-                        generateVariants();
-                        drop.innerText = 'Image Ready — Glitch Variants Generated Below';
-                    } catch (err) {
-                        output.value = 'Error reading pixels: ' + err.message;
-                        drop.innerText = 'Error loading image';
-                    }
-                };
-                img.src = url;
+        function processImage(selectedFile) {
+            if (!selectedFile || !selectedFile.type.startsWith('image/')) return;
+            const url = URL.createObjectURL(selectedFile);
+            const img = new Image();
+            img.onload = () => {
+                imageWidth = img.naturalWidth;
+                imageHeight = img.naturalHeight;
+                originalPreview.src = url;
+                const canvas = document.createElement('canvas');
+                canvas.width = imageWidth;
+                canvas.height = imageHeight;
+                const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                ctx.drawImage(img, 0, 0);
+                try {
+                    extractedRects = extractRects(ctx.getImageData(0, 0, imageWidth, imageHeight).data, imageWidth, imageHeight);
+                    generateVariants();
+                    drop.textContent = `Loaded ${selectedFile.name} — ${imageWidth} × ${imageHeight}`;
+                } catch (error) {
+                    output.value = 'Error reading pixels: ' + error.message;
+                    drop.textContent = 'Could not read pixels. Try another image.';
+                } finally {
+                    URL.revokeObjectURL(url);
+                }
             };
-            reader.readAsDataURL(selectedFile);
+            img.onerror = () => { URL.revokeObjectURL(url); drop.textContent = 'Image could not be loaded.'; };
+            img.src = url;
         }
 
-        function extractRectanglesFromImageData(imgData, width, height) {
+        function extractRects(data, width, height) {
             const rects = [];
-
             for (let y = 0; y < height; y++) {
-                let runStart = 0;
-                let runColor = '';
-                let runAlpha = 0;
-                let inRun = false;
-
-                for (let x = 0; x < width; x++) {
+                let start = -1;
+                let color = '';
+                let alpha = 1;
+                for (let x = 0; x <= width; x++) {
                     const index = (y * width + x) * 4;
-                    const r = imgData[index];
-                    const g = imgData[index + 1];
-                    const b = imgData[index + 2];
-                    const a = imgData[index + 3];
-                    const hex = '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
-                    const alpha = a / 255;
-
-                    if (inRun) {
-                        const currentAlpha = imgData[(y * width + runStart) * 4 + 3] / 255;
-                        if (a === imgData[(y * width + runStart) * 4 + 3] && hex === runColor) {
-                            continue;
-                        }
-
-                        rects.push({
-                            x: runStart,
-                            y: y,
-                            width: x - runStart,
-                            height: 1,
-                            fill: runColor,
-                            alpha: runAlpha,
-                            alphaValue: currentAlpha
-                        });
-                        inRun = false;
+                    const a = x < width ? data[index + 3] : 0;
+                    const hex = x < width ? rgbHex(data[index], data[index + 1], data[index + 2]) : '';
+                    const nextAlpha = a / 255;
+                    if (start >= 0 && (a === 0 || hex !== color || nextAlpha !== alpha)) {
+                        rects.push({ x: start, y, width: x - start, height: 1, fill: color, alpha });
+                        start = -1;
                     }
-
-                    if (a > 0) {
-                        runStart = x;
-                        runColor = hex;
-                        runAlpha = alpha;
-                        inRun = true;
-                    }
-                }
-
-                if (inRun) {
-                    rects.push({
-                        x: runStart,
-                        y: y,
-                        width: width - runStart,
-                        height: 1,
-                        fill: runColor,
-                        alpha: runAlpha,
-                        alphaValue: runAlpha
-                    });
+                    if (a > 0 && start < 0) { start = x; color = hex; alpha = nextAlpha; }
                 }
             }
-
             return rects;
         }
 
-        function buildSvgFromRects(rects, width, height, options = {}) {
-            const background = options.background || '#000000';
-            const withText = !!options.withText;
-            const textLabel = options.textLabel || 'GLITCH';
-            const textColor = options.textColor || '#FFFFFF';
-            const textOpacity = options.textOpacity ?? 0.75;
-            const transform = options.transform || '';
-
-            let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" shape-rendering="crispEdges">
-  <rect width="${width}" height="${height}" fill="${background}" />\n`;
-
+        function makeSvg(rects, width, height, options = {}) {
+            let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" shape-rendering="crispEdges">\n`;
             for (const rect of rects) {
-                const gx = Math.round(rect.x + (options.offsetX || 0));
-                const gy = Math.round(rect.y + (options.offsetY || 0));
-                const gw = Math.max(1, Math.round(rect.width + (options.widthShift || 0)));
-                const alpha = Math.min(1, Math.max(0, rect.alpha ?? 1));
-                const fill = rect.fill || '#FFFFFF';
-                const opacity = alpha < 1 ? alpha.toFixed(2) : '1';
-                svg += `  <rect x="${gx}" y="${gy}" width="${gw}" height="${rect.height}" fill="${fill}" fill-opacity="${opacity}" />\n`;
+                const x = Math.round(rect.x + (options.offsetX || 0));
+                const y = Math.round(rect.y + (options.offsetY || 0));
+                const w = Math.max(1, Math.round(rect.width + (options.widthShift || 0)));
+                svg += `  <rect x="${x}" y="${y}" width="${w}" height="${rect.height}" fill="${rect.fill}" fill-opacity="${rect.alpha.toFixed(3)}" />\n`;
             }
-
-            if (withText) {
-                const fontSize = Math.max(24, Math.min(width, height) * 0.32);
-                svg += `  <g transform="${transform}" opacity="${textOpacity}">\n`;
-                svg += `    <text x="${Math.round(width * 0.08)}" y="${Math.round(height * 0.72)}" font-size="${fontSize}" font-family="monospace" font-weight="700" letter-spacing="3" fill="${textColor}" transform="skewX(-10)">${escapeXml(textLabel)}</text>\n`;
-                svg += `  </g>\n`;
+            if (options.label) {
+                const fontSize = Math.max(16, Math.min(width, height) * 0.19);
+                svg += `  <text x="${Math.round(width * 0.07)}" y="${Math.round(height * 0.55)}" fill="${options.textColor}" fill-opacity="0.72" font-family="monospace" font-size="${fontSize}" font-weight="bold" letter-spacing="3" transform="skewX(-10)">${escapeXml(options.label)}</text>\n`;
             }
-
-            svg += `</svg>`;
-            return svg;
+            return svg + '</svg>';
         }
 
         function generateVariants() {
             if (!extractedRects.length) return;
-
-            const variants = [
-                {
-                    name: 'Scanline drift',
-                    offsetY: 2,
-                    widthShift: 2,
-                    tint: '#00E0FF',
-                    textLabel: 'SCAN',
-                    withText: true,
-                    textOpacity: 0.25,
-                    transform: 'translate(8 0) skewX(-12)'
-                },
-                {
-                    name: 'Slice split',
-                    offsetX: 8,
-                    offsetY: -3,
-                    widthShift: 4,
-                    tint: '#FF5F7D',
-                    textLabel: 'GLITCH',
-                    withText: true,
-                    textOpacity: 0.35,
-                    transform: 'translate(-18 10) skewX(14)'
-                },
-                {
-                    name: 'Chromatic offset',
-                    offsetX: -4,
-                    widthShift: 6,
-                    tint: '#B5FF7D',
-                    textLabel: 'SVG',
-                    withText: true,
-                    textOpacity: 0.4,
-                    transform: 'translate(16 0) rotate(-8 120 160)'
-                },
-                {
-                    name: 'Desync stack',
-                    offsetX: 16,
-                    offsetY: 8,
-                    widthShift: -3,
-                    tint: '#FFB347',
-                    textLabel: 'TEXT',
-                    withText: true,
-                    textOpacity: 0.28,
-                    transform: 'translate(-10 -10) rotate(6 200 120)'
-                }
+            const configs = [
+                { name: 'Olive scanline', color: PALETTE[0], dx: 2, dy: 1, width: 2, label: 'SCAN' },
+                { name: 'Ochre slice split', color: PALETTE[1], dx: -5, dy: 2, width: 5, label: 'GLITCH' },
+                { name: 'Crimson chromatic', color: PALETTE[5], dx: 4, dy: -2, width: 3, label: 'SHIFT' },
+                { name: 'Lime desync', color: PALETTE[6], dx: -2, dy: 3, width: 7, label: 'PIXEL' },
+                { name: 'Green signal', color: PALETTE[7], dx: 7, dy: 0, width: -1, label: 'SIGNAL' },
+                { name: 'Yellow overprint', color: PALETTE[4], dx: 0, dy: -3, width: 4, label: 'ERROR' }
             ];
-
-            variantList = variants.map((variant, index) => {
-                const shifted = extractedRects.map((rect, rectIndex) => {
-                    const jitterY = (rectIndex % 7 === 0) ? (variant.offsetY || 0) + (Math.random() * 6 - 3) : variant.offsetY || 0;
-                    const jitterX = (rectIndex % 5 === 0) ? (variant.offsetX || 0) + (Math.random() * 9 - 4) : variant.offsetX || 0;
-                    const shouldShift = index % 2 === 0 ? (rectIndex % 3 === 0) : (rectIndex % 4 === 0);
-
-                    let fill = rect.fill;
-                    if (shouldShift) {
-                        fill = tintHex(rect.fill, variant.tint || '#FFFFFF', 0.18 + ((rectIndex % 9) / 30));
-                    }
-
+            variants = configs.map((config, index) => {
+                const rects = extractedRects.map((rect, i) => {
+                    const isGlitched = i % (index + 2) === 0;
                     return {
                         ...rect,
-                        x: Math.max(0, Math.min(imageWidth - 1, rect.x + jitterX)),
-                        y: Math.max(0, Math.min(imageHeight - 1, rect.y + jitterY)),
-                        width: Math.max(1, rect.width + (variant.widthShift || 0)),
-                        fill
+                        x: Math.max(0, Math.min(imageWidth - 1, rect.x + (isGlitched ? config.dx : 0))),
+                        y: Math.max(0, Math.min(imageHeight - 1, rect.y + (isGlitched ? config.dy : 0))),
+                        width: Math.max(1, rect.width + (isGlitched ? config.width : 0)),
+                        fill: isGlitched ? mixColor(rect.fill, config.color, 0.45) : rect.fill
                     };
                 });
-
-                const svg = buildSvgFromRects(shifted, imageWidth, imageHeight, {
-                    background: '#000000',
-                    withText: variant.withText,
-                    textLabel: variant.textLabel,
-                    textOpacity: variant.textOpacity,
-                    transform: variant.transform,
-                    textColor: variant.tint,
-                    offsetX: index % 2 === 0 ? 0 : 6,
-                    offsetY: index % 3 === 0 ? 0 : 2
-                });
-
-                return {
-                    ...variant,
-                    svg,
-                    previewUrl: svgToPreviewUrl(svg)
-                };
+                const svg = makeSvg(rects, imageWidth, imageHeight, { label: config.label, textColor: config.color });
+                return { ...config, svg, preview: svgPreviewUrl(svg) };
             });
-
-            renderVariantCards();
-            if (variantList[0]) {
-                currentVariantSvg = variantList[0].svg;
-                renderSvgPreview(currentVariantSvg);
-            }
+            renderVariants();
+            selectVariant(variants[0]);
         }
 
-        function renderVariantCards() {
-            variantGrid.innerHTML = '';
-
-            variantList.forEach((variant, index) => {
-                const card = document.createElement('div');
+        function renderVariants() {
+            variantGrid.replaceChildren();
+            variants.forEach((variant, index) => {
+                const card = document.createElement('article');
                 card.className = 'variant-card';
-                card.innerHTML = `
-                    <div class="meta">
-                        <h4>${variant.name}</h4>
-                        <span>${index + 1}/4</span>
-                    </div>
-                    <div class="thumb">
-                        <img src="${variant.previewUrl}" alt="${variant.name} preview" />
-                    </div>
-                    <div class="variant-actions">
-                        <button class="mini-btn" type="button" data-action="select" data-index="${index}">Use variant</button>
-                        <button class="mini-btn secondary" type="button" data-action="download-svg" data-index="${index}">SVG</button>
-                        <button class="mini-btn" type="button" data-action="download-png" data-index="${index}">PNG</button>
-                    </div>
-                `;
-
-                card.querySelector('[data-action="select"]').onclick = () => {
-                    currentVariantSvg = variant.svg;
-                    renderSvgPreview(currentVariantSvg);
-                    output.value = variant.svg;
-                };
-
-                card.querySelector('[data-action="download-svg"]').onclick = () => {
-                    triggerDownload(variant.svg, `${slugify(variant.name)}.svg`, 'image/svg+xml');
-                };
-
-                card.querySelector('[data-action="download-png"]').onclick = () => {
-                    svgToPngDataUrl(variant.svg).then((pngUrl) => {
-                        triggerDownload(pngUrl, `${slugify(variant.name)}.png`, 'image/png');
-                    });
-                };
-
-                variantGrid.appendChild(card);
+                const meta = document.createElement('div');
+                meta.className = 'meta';
+                const title = document.createElement('h3');
+                title.textContent = variant.name;
+                const number = document.createElement('span');
+                number.textContent = `${index + 1}/${variants.length}`;
+                meta.append(title, number);
+                const thumb = document.createElement('div');
+                thumb.className = 'thumb';
+                const image = new Image();
+                image.alt = `${variant.name} preview`;
+                image.src = variant.preview;
+                thumb.append(image);
+                const actions = document.createElement('div');
+                actions.className = 'variant-actions';
+                const use = button('Use preview', 'mini-btn', () => selectVariant(variant));
+                const svg = button('Download SVG', 'mini-btn secondary', () => downloadBlob(variant.svg, `${slug(variant.name)}.svg`, 'image/svg+xml'));
+                const png = button('Download PNG', 'mini-btn green', async () => {
+                    try { downloadBlob(await svgToPng(variant.svg), `${slug(variant.name)}.png`, 'image/png'); }
+                    catch (error) { alert('Could not export PNG: ' + error.message); }
+                });
+                actions.append(use, svg, png);
+                card.append(meta, thumb, actions);
+                variantGrid.append(card);
             });
         }
 
-        function renderSvgPreview(svgString) {
-            const previewUrl = svgToPreviewUrl(svgString);
-            svgPreview.src = previewUrl;
+        function button(label, className, onClick) {
+            const element = document.createElement('button');
+            element.type = 'button';
+            element.className = className;
+            element.textContent = label;
+            element.addEventListener('click', onClick);
+            return element;
         }
 
-        function svgToPreviewUrl(svgString) {
-            return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
+        function selectVariant(variant) {
+            currentSvg = variant.svg;
+            output.value = currentSvg;
+            svgPreview.src = variant.preview;
         }
 
-        function triggerDownload(content, fileName, mimeType) {
-            const blob = mimeType === 'image/svg+xml' ? new Blob([content], { type: mimeType }) : dataUrlToBlob(content);
+        function svgPreviewUrl(svg) { return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); }
+        function downloadBlob(data, filename, type) {
+            const blob = data instanceof Blob ? data : new Blob([data], { type });
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = fileName;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 2000);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
         }
-
-        function dataUrlToBlob(dataUrl) {
-            const parts = dataUrl.split(',');
-            const mime = parts[0].match(/:(.*?);/)[1];
-            const binary = atob(parts[1]);
-            const array = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) {
-                array[i] = binary.charCodeAt(i);
-            }
-            return new Blob([array], { type: mime });
-        }
-
-        function svgToPngDataUrl(svgString) {
+        function svgToPng(svg) {
             return new Promise((resolve, reject) => {
-                const img = new Image();
-                img.onload = () => {
+                const image = new Image();
+                image.onload = () => {
                     const canvas = document.createElement('canvas');
-                    canvas.width = imageWidth || 600;
-                    canvas.height = imageHeight || 400;
-                    const ctx = canvas.getContext('2d');
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                    resolve(canvas.toDataURL('image/png'));
+                    canvas.width = imageWidth;
+                    canvas.height = imageHeight;
+                    canvas.getContext('2d').drawImage(image, 0, 0, imageWidth, imageHeight);
+                    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('PNG conversion failed')), 'image/png');
                 };
-                img.onerror = reject;
-                img.src = svgToPreviewUrl(svgString);
+                image.onerror = () => reject(new Error('SVG preview could not be rendered'));
+                image.src = svgPreviewUrl(svg);
             });
         }
-
-        function tintHex(hex, tintHexValue, amount) {
-            const rgb = hexToRgb(hex);
-            const tint = hexToRgb(tintHexValue);
-            const mix = {
-                r: Math.round(rgb.r + (tint.r - rgb.r) * amount),
-                g: Math.round(rgb.g + (tint.g - rgb.g) * amount),
-                b: Math.round(rgb.b + (tint.b - rgb.b) * amount)
-            };
-            return rgbToHex(mix.r, mix.g, mix.b);
+        function rgbHex(r, g, b) { return '#' + [r, g, b].map((value) => value.toString(16).padStart(2, '0')).join('').toUpperCase(); }
+        function mixColor(hex, tint, amount) {
+            const a = hex.slice(1).match(/.{2}/g).map((value) => parseInt(value, 16));
+            const b = tint.slice(1).match(/.{2}/g).map((value) => parseInt(value, 16));
+            return rgbHex(...a.map((value, i) => Math.round(value + (b[i] - value) * amount)));
         }
-
-        function hexToRgb(hex) {
-            const clean = hex.replace('#', '');
-            const value = clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean;
-            const num = parseInt(value, 16);
-            return {
-                r: (num >> 16) & 255,
-                g: (num >> 8) & 255,
-                b: num & 255
-            };
-        }
-
-        function rgbToHex(r, g, b) {
-            return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase();
-        }
-
         function escapeXml(value) {
-            return String(value)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&apos;');
+            return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
         }
-
-        function slugify(value) {
-            return String(value)
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, '-')
-                .replace(/(^-|-$)/g, '') || 'glitch-variant';
-        }
+        function slug(value) { return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'glitch'; }
     </script>
 </body>
 </html>
