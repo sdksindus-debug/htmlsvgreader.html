@@ -5,45 +5,33 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Pixel Reader to SVG</title>
     <style>
-        body { font-family: monospace; max-width: 900px; margin: 20px auto; padding: 20px; color: #222; }
+        body { font-family: monospace; max-width: 1000px; margin: 20px auto; padding: 20px; color: #222; }
         .drop-box { border: 2px dashed #333; padding: 30px; text-align: center; cursor: pointer; background: #f9f9f9; }
         .drop-box.dragging { background: #e8f2ff; border-color: #1769aa; }
-        .controls { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; align-items: center; }
-        button { padding: 9px 14px; cursor: pointer; }
-        button:disabled { cursor: not-allowed; opacity: .5; }
-        textarea { box-sizing: border-box; width: 100%; height: 300px; margin-top: 12px; font-family: monospace; background: #222; color: #0f0; padding: 10px; }
-        .preview-wrap { margin-top: 20px; }
-        #preview { display: block; max-width: 100%; height: auto; margin-top: 8px; border: 1px solid #ccc; image-rendering: pixelated; }
         #status { min-height: 1.4em; }
+        #results { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-top: 20px; }
+        .result-card { min-width: 0; border: 1px solid #ccc; padding: 14px; }
+        .result-card h2 { font-size: 1.05rem; margin: 0 0 8px; }
+        .result-card p { min-height: 2.8em; font-size: .9rem; }
+        .preview { display: block; box-sizing: border-box; max-width: 100%; height: auto; margin: 8px 0; border: 1px solid #ccc; image-rendering: pixelated; }
+        .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+        button { padding: 8px 11px; cursor: pointer; }
+        textarea { box-sizing: border-box; width: 100%; height: 190px; margin-top: 10px; font-family: monospace; background: #222; color: #0f0; padding: 10px; }
+        [hidden] { display: none !important; }
     </style>
 </head>
 <body>
     <div class="drop-box" id="drop">Click or drop an image here to extract optimized SVG rows</div>
     <input type="file" id="file" accept="image/*" hidden>
-    <p id="status" role="status">Choose an image to begin.</p>
-
-    <div class="controls">
-        <button id="downloadText" type="button" disabled>Download SVG text</button>
-        <button id="downloadImage" type="button" disabled>Download PNG preview</button>
-    </div>
-
-    <div class="preview-wrap">
-        <strong>Image preview</strong>
-        <canvas id="preview" aria-label="Generated image preview"></canvas>
-    </div>
-    <label for="output"><strong>Generated SVG text</strong></label>
-    <textarea id="output" readonly placeholder="Generated SVG will appear here..."></textarea>
+    <p id="status" role="status">Choose an image to create rectangle, path, and reread versions.</p>
+    <section id="results" aria-label="Generated image versions" hidden></section>
 
     <script>
         const drop = document.getElementById('drop');
         const fileInput = document.getElementById('file');
-        const output = document.getElementById('output');
         const status = document.getElementById('status');
-        const preview = document.getElementById('preview');
-        const downloadText = document.getElementById('downloadText');
-        const downloadImage = document.getElementById('downloadImage');
-        const ROUND_TRIP_RECT_LIMIT = 10000;
-        let currentSvg = '';
+        const results = document.getElementById('results');
+        let processId = 0;
 
         drop.addEventListener('click', () => fileInput.click());
         drop.addEventListener('dragover', (event) => {
@@ -57,71 +45,65 @@
             process(event.dataTransfer.files[0]);
         });
         fileInput.addEventListener('change', (event) => process(event.target.files[0]));
-        downloadText.addEventListener('click', downloadSvg);
-        downloadImage.addEventListener('click', downloadPng);
 
-        function process(selectedFile) {
+        async function process(selectedFile) {
             if (!selectedFile) return;
             if (!selectedFile.type.startsWith('image/')) {
                 status.textContent = 'Please choose a valid image file.';
                 return;
             }
 
-            status.textContent = 'Reading image…';
+            const thisProcess = ++processId;
+            results.replaceChildren();
+            results.hidden = true;
+            status.textContent = 'Reading image and generating SVG versions…';
             const objectUrl = URL.createObjectURL(selectedFile);
-            const img = new Image();
-            img.onload = () => {
-                try {
-                    const sourceCanvas = document.createElement('canvas');
-                    sourceCanvas.width = img.naturalWidth;
-                    sourceCanvas.height = img.naturalHeight;
-                    const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true });
-                    sourceContext.drawImage(img, 0, 0);
-                    const pixels = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height).data;
 
-                    const initial = pixelsToSvg(pixels, sourceCanvas.width, sourceCanvas.height);
-                    let svg = initial.svg;
-                    let displayedCount = initial.rectCount;
-                    let wasReread = false;
+            try {
+                const img = await loadImage(objectUrl);
+                const width = img.naturalWidth;
+                const height = img.naturalHeight;
+                const sourceCanvas = document.createElement('canvas');
+                sourceCanvas.width = width;
+                sourceCanvas.height = height;
+                const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true });
+                sourceContext.drawImage(img, 0, 0);
 
-                    // At 10,000 or more rectangles, parse the SVG rects into shapes,
-                    // render those shapes as a new image, and read its pixels back.
-                    if (initial.rectCount >= ROUND_TRIP_RECT_LIMIT) {
-                        const shapes = readSvgRectangles(svg);
-                        const roundTripCanvas = renderShapes(shapes, sourceCanvas.width, sourceCanvas.height);
-                        const rereadPixels = roundTripCanvas.getContext('2d', { willReadFrequently: true })
-                            .getImageData(0, 0, roundTripCanvas.width, roundTripCanvas.height).data;
-                        const reread = pixelsToSvg(rereadPixels, roundTripCanvas.width, roundTripCanvas.height);
-                        svg = reread.svg;
-                        displayedCount = reread.rectCount;
-                        copyCanvas(roundTripCanvas, preview);
-                        wasReread = true;
-                    } else {
-                        copyCanvas(sourceCanvas, preview);
-                    }
+                // Extract horizontal color runs as SVG rectangles.
+                const initial = pixelsToSvg(sourceContext.getImageData(0, 0, width, height).data, width, height);
+                // Parse the emitted SVG rectangles and combine them into SVG path data.
+                const shapes = readSvgRectangles(initial.svg);
+                const pathSvg = rectanglesToPaths(shapes, width, height);
 
-                    currentSvg = svg;
-                    output.value = svg;
-                    downloadText.disabled = false;
-                    downloadImage.disabled = false;
-                    drop.textContent = 'Success! Drop another image or click to choose one.';
-                    status.textContent = `${displayedCount.toLocaleString()} SVG rectangles generated (${sourceCanvas.width} × ${sourceCanvas.height}).` +
-                        (wasReread ? ' The 10,000+ rectangle SVG was rendered as a new image and read back.' : '');
-                } catch (error) {
-                    currentSvg = '';
-                    output.value = '';
-                    downloadText.disabled = true;
-                    downloadImage.disabled = true;
+                // Render the path SVG as a fresh image, then read its pixels back into SVG.
+                const pathCanvas = await renderSvgToCanvas(pathSvg, width, height);
+                const rereadPixels = pathCanvas.getContext('2d', { willReadFrequently: true })
+                    .getImageData(0, 0, width, height).data;
+                const reread = pixelsToSvg(rereadPixels, width, height);
+
+                if (thisProcess !== processId) return;
+                addResultCard('Rectangle SVG', `${initial.rectCount.toLocaleString()} extracted rectangles`, initial.svg, sourceCanvas, 'rectangles');
+                addResultCard('Path SVG', `${shapes.length.toLocaleString()} rectangle elements converted to grouped path data`, pathSvg, pathCanvas, 'paths');
+                addResultCard('Reread SVG', `${reread.rectCount.toLocaleString()} rectangles generated by rereading the rendered path image`, reread.svg, pathCanvas, 'reread');
+                results.hidden = false;
+                status.textContent = `Generated three downloadable versions (${width} × ${height}): the extracted rectangles, grouped paths, and an SVG rebuilt after rendering and rereading the paths.`;
+                drop.textContent = 'Success! Drop another image or click to choose one.';
+            } catch (error) {
+                if (thisProcess === processId) {
                     status.textContent = 'Could not process image: ' + error.message;
-                } finally {
-                    URL.revokeObjectURL(objectUrl);
                 }
-            };
-            img.onerror = () => {
+            } finally {
                 URL.revokeObjectURL(objectUrl);
-                status.textContent = 'The selected file could not be loaded as an image.';
-            };
-            img.src = objectUrl;
+            }
+        }
+
+        function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const image = new Image();
+                image.onload = () => resolve(image);
+                image.onerror = () => reject(new Error('The selected file could not be loaded as an image.'));
+                image.src = url;
+            });
         }
 
         function pixelsToSvg(data, width, height) {
@@ -166,9 +148,9 @@
         }
 
         function readSvgRectangles(svgText) {
-            const document = new DOMParser().parseFromString(svgText, 'image/svg+xml');
-            if (document.querySelector('parsererror')) throw new Error('Generated SVG could not be parsed.');
-            return Array.from(document.querySelectorAll('svg > rect')).map((element) => ({
+            const parsed = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+            if (parsed.querySelector('parsererror')) throw new Error('Generated SVG could not be parsed.');
+            return Array.from(parsed.querySelectorAll('svg > rect')).map((element) => ({
                 x: Number(element.getAttribute('x')),
                 y: Number(element.getAttribute('y')),
                 width: Number(element.getAttribute('width')),
@@ -178,35 +160,87 @@
             }));
         }
 
-        function renderShapes(shapes, width, height) {
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const context = canvas.getContext('2d', { willReadFrequently: true });
+        function rectanglesToPaths(shapes, width, height) {
+            const groups = new Map();
             for (const shape of shapes) {
-                context.globalAlpha = shape.opacity;
-                context.fillStyle = shape.color;
-                context.fillRect(shape.x, shape.y, shape.width, shape.height);
+                const opacity = Number(shape.opacity.toFixed(8));
+                const key = `${shape.color}|${opacity}`;
+                if (!groups.has(key)) groups.set(key, { color: shape.color, opacity, paths: [] });
+                // Each rectangle becomes a closed subpath; same-style rectangles share one <path>.
+                groups.get(key).paths.push(`M${shape.x} ${shape.y}h${shape.width}v${shape.height}h-${shape.width}z`);
             }
-            context.globalAlpha = 1;
-            return canvas;
+
+            const lines = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">\n`];
+            for (const group of groups.values()) {
+                const opacity = group.opacity < 1 ? ` fill-opacity="${group.opacity}"` : '';
+                lines.push(`  <path fill="${group.color}"${opacity} d="${group.paths.join('')}" />\n`);
+            }
+            lines.push('</svg>');
+            return lines.join('');
         }
 
-        function copyCanvas(source, destination) {
-            destination.width = source.width;
-            destination.height = source.height;
-            destination.getContext('2d').drawImage(source, 0, 0);
+        function renderSvgToCanvas(svg, width, height) {
+            return new Promise((resolve, reject) => {
+                const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+                const image = new Image();
+                image.onload = () => {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        canvas.getContext('2d', { willReadFrequently: true }).drawImage(image, 0, 0, width, height);
+                        resolve(canvas);
+                    } catch (error) {
+                        reject(error);
+                    } finally {
+                        URL.revokeObjectURL(url);
+                    }
+                };
+                image.onerror = () => {
+                    URL.revokeObjectURL(url);
+                    reject(new Error('The generated path SVG could not be rendered.'));
+                };
+                image.src = url;
+            });
         }
 
-        function downloadSvg() {
-            downloadBlob(new Blob([currentSvg], { type: 'image/svg+xml;charset=utf-8' }), 'pixel-art.svg');
-        }
-
-        function downloadPng() {
-            preview.toBlob((blob) => {
-                if (blob) downloadBlob(blob, 'pixel-art.png');
-                else status.textContent = 'The PNG preview could not be created.';
-            }, 'image/png');
+        function addResultCard(title, description, svgText, imageCanvas, filename) {
+            const card = document.createElement('article');
+            card.className = 'result-card';
+            const heading = document.createElement('h2');
+            heading.textContent = title;
+            const details = document.createElement('p');
+            details.textContent = description;
+            const preview = document.createElement('canvas');
+            preview.className = 'preview';
+            preview.width = imageCanvas.width;
+            preview.height = imageCanvas.height;
+            preview.setAttribute('aria-label', `${title} image preview`);
+            preview.getContext('2d').drawImage(imageCanvas, 0, 0);
+            const actions = document.createElement('div');
+            actions.className = 'actions';
+            const textButton = document.createElement('button');
+            textButton.type = 'button';
+            textButton.textContent = 'Download SVG text';
+            textButton.addEventListener('click', () => downloadBlob(
+                new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' }), `pixel-art-${filename}.svg`
+            ));
+            const imageButton = document.createElement('button');
+            imageButton.type = 'button';
+            imageButton.textContent = 'Download PNG preview';
+            imageButton.addEventListener('click', () => preview.toBlob((blob) => {
+                if (blob) downloadBlob(blob, `pixel-art-${filename}.png`);
+                else status.textContent = `The ${title} PNG preview could not be created.`;
+            }, 'image/png'));
+            actions.append(textButton, imageButton);
+            const textLabel = document.createElement('label');
+            textLabel.textContent = 'SVG text';
+            const textarea = document.createElement('textarea');
+            textarea.readOnly = true;
+            textarea.setAttribute('aria-label', `${title} SVG text`);
+            textarea.value = svgText;
+            card.append(heading, details, preview, actions, textLabel, textarea);
+            results.append(card);
         }
 
         function downloadBlob(blob, filename) {
@@ -215,7 +249,7 @@
             link.href = url;
             link.download = filename;
             link.click();
-            URL.revokeObjectURL(url);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
         }
     </script>
 </body>
