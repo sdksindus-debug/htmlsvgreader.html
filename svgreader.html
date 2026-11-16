@@ -3,30 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Pixel Reader &amp; SVG Glitch Lab</title>
+    <title>Pixel Reader &amp; SVG Mirror Lab</title>
     <style>
         :root {
-            --olive: #999918;
-            --ochre: #BAAA44;
-            --gold: #9C6400;
-            --sand: #E3D05C;
-            --yellow: #FCE957;
-            --red: #952222;
-            --lime: #CECE06;
-            --green: #09AF0B;
-            --paper: #fffdf2;
-            --ink: #292714;
-            --muted: #625e35;
-            --line: rgba(41, 39, 20, .18);
-            --shadow: rgba(65, 58, 18, .14);
+            --olive: #999918; --ochre: #BAAA44; --red: #952222; --green: #09AF0B;
+            --paper: #fffdf2; --ink: #292714; --muted: #625e35;
+            --line: rgba(41, 39, 20, .18); --shadow: rgba(65, 58, 18, .14);
         }
-
         * { box-sizing: border-box; }
         body {
-            margin: 0;
-            padding: 24px;
-            color: var(--ink);
-            font-family: "Segoe UI", Tahoma, sans-serif;
+            margin: 0; padding: 24px; color: var(--ink); font-family: "Segoe UI", Tahoma, sans-serif;
             background-color: #faf8ea;
             background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
             background-size: 36px 36px;
@@ -84,8 +70,8 @@
 <body>
     <main class="container">
         <header>
-            <h1>Pixel Reader &amp; SVG Glitch Lab</h1>
-            <p class="intro">Extract image pixels as SVG rectangles, create glitch variations, and download SVG or PNG previews.</p>
+            <h1>Pixel Reader &amp; SVG Mirror Lab</h1>
+            <p class="intro">Extract image pixels as SVG rectangles, create mirrored variations, and download SVG or PNG previews.</p>
             <div class="palette" aria-label="Active color palette">
                 <span class="swatch" title="#999918" style="background:#999918"></span>
                 <span class="swatch" title="#BAAA44" style="background:#BAAA44"></span>
@@ -99,23 +85,22 @@
         </header>
 
         <div class="toolbar">
-            <div class="drop-box" id="drop">Click or drop an image here to extract pixels and generate glitch previews</div>
+            <div class="drop-box" id="drop">Click or drop an image here to extract pixels and generate mirrored previews</div>
             <input type="file" id="file" accept="image/*">
-            <button id="glitchButton" type="button">Regenerate Glitches</button>
+            <button id="mirrorButton" type="button">Regenerate Mirrors</button>
             <button id="downloadCurrentSvg" class="secondary" type="button">Download Current SVG</button>
             <button id="downloadCurrentPng" class="green" type="button">Download Current PNG</button>
         </div>
 
         <section class="grid" aria-label="Image previews">
             <article class="panel"><h2>Original Image</h2><div class="image-wrap"><img id="originalPreview" alt="Original image preview"></div></article>
-            <article class="panel"><h2>Selected SVG Preview</h2><div class="image-wrap"><img id="svgPreview" alt="Selected SVG preview"></div></article>
+            <article class="panel"><h2>Selected Mirror Preview</h2><div class="image-wrap"><img id="svgPreview" alt="Selected mirrored SVG preview"></div></article>
         </section>
         <textarea id="output" readonly placeholder="Extracted or selected SVG markup will appear here..."></textarea>
-        <section class="variants"><h2>Glitched Rectangle Variants</h2><div id="variantGrid" class="variant-grid"></div></section>
+        <section class="variants"><h2>Mirrored Variants</h2><div id="variantGrid" class="variant-grid"></div></section>
     </main>
 
     <script>
-        const PALETTE = ['#999918', '#BAAA44', '#9C6400', '#E3D05C', '#FCE957', '#952222', '#CECE06', '#09AF0B'];
         const drop = document.getElementById('drop');
         const file = document.getElementById('file');
         const output = document.getElementById('output');
@@ -123,6 +108,8 @@
         const svgPreview = document.getElementById('svgPreview');
         const variantGrid = document.getElementById('variantGrid');
         let currentSvg = '';
+        let currentSvgWidth = 0;
+        let currentSvgHeight = 0;
         let imageWidth = 0;
         let imageHeight = 0;
         let extractedRects = [];
@@ -137,14 +124,15 @@
         file.addEventListener('change', (event) => {
             if (event.target.files[0]) processImage(event.target.files[0]);
         });
-        document.getElementById('glitchButton').addEventListener('click', generateVariants);
+        document.getElementById('mirrorButton').addEventListener('click', generateMirrorVariants);
         document.getElementById('downloadCurrentSvg').addEventListener('click', () => {
-            if (currentSvg) downloadBlob(currentSvg, 'glitched-image.svg', 'image/svg+xml');
+            if (currentSvg) downloadBlob(currentSvg, 'mirrored-image.svg', 'image/svg+xml');
         });
         document.getElementById('downloadCurrentPng').addEventListener('click', async () => {
             if (!currentSvg) return;
-            try { downloadBlob(await svgToPng(currentSvg), 'glitched-image.png', 'image/png'); }
-            catch (error) { alert('Could not export PNG: ' + error.message); }
+            try {
+                downloadBlob(await svgToPng(currentSvg, currentSvgWidth, currentSvgHeight), 'mirrored-image.png', 'image/png');
+            } catch (error) { alert('Could not export PNG: ' + error.message); }
         });
 
         function processImage(selectedFile) {
@@ -162,7 +150,7 @@
                 ctx.drawImage(img, 0, 0);
                 try {
                     extractedRects = extractRects(ctx.getImageData(0, 0, imageWidth, imageHeight).data, imageWidth, imageHeight);
-                    generateVariants();
+                    generateMirrorVariants();
                     drop.textContent = `Loaded ${selectedFile.name} — ${imageWidth} × ${imageHeight}`;
                 } catch (error) {
                     output.value = 'Error reading pixels: ' + error.message;
@@ -196,47 +184,46 @@
             return rects;
         }
 
-        function makeSvg(rects, width, height, options = {}) {
+        function makeSvg(rects, width, height) {
             let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" shape-rendering="crispEdges">\n`;
             for (const rect of rects) {
-                const x = Math.round(rect.x + (options.offsetX || 0));
-                const y = Math.round(rect.y + (options.offsetY || 0));
-                const w = Math.max(1, Math.round(rect.width + (options.widthShift || 0)));
-                svg += `  <rect x="${x}" y="${y}" width="${w}" height="${rect.height}" fill="${rect.fill}" fill-opacity="${rect.alpha.toFixed(3)}" />\n`;
-            }
-            if (options.label) {
-                const fontSize = Math.max(16, Math.min(width, height) * 0.19);
-                svg += `  <text x="${Math.round(width * 0.07)}" y="${Math.round(height * 0.55)}" fill="${options.textColor}" fill-opacity="0.72" font-family="monospace" font-size="${fontSize}" font-weight="bold" letter-spacing="3" transform="skewX(-10)">${escapeXml(options.label)}</text>\n`;
+                svg += `  <rect x="${rect.x}" y="${rect.y}" width="${rect.width}" height="${rect.height}" fill="${rect.fill}" fill-opacity="${rect.alpha.toFixed(3)}" />\n`;
             }
             return svg + '</svg>';
         }
 
-        function generateVariants() {
+        function makeFourWayMirrorSvg(rects, width, height) {
+            const mirroredRects = [];
+            for (const rect of rects) {
+                const left = rect.x;
+                const right = width * 2 - rect.x - rect.width;
+                const top = rect.y;
+                const bottom = height * 2 - rect.y - rect.height;
+                const copies = [
+                    { x: left, y: top },
+                    { x: right, y: top },
+                    { x: left, y: bottom },
+                    { x: right, y: bottom }
+                ];
+                for (const copy of copies) mirroredRects.push({ ...rect, ...copy });
+            }
+            return makeSvg(mirroredRects, width * 2, height * 2);
+        }
+
+        function generateMirrorVariants() {
             if (!extractedRects.length) return;
-            const configs = [
-                { name: 'Olive scanline', color: PALETTE[0], dx: 2, dy: 1, width: 2, label: 'SCAN' },
-                { name: 'Ochre slice split', color: PALETTE[1], dx: -5, dy: 2, width: 5, label: 'GLITCH' },
-                { name: 'Crimson chromatic', color: PALETTE[5], dx: 4, dy: -2, width: 3, label: 'SHIFT' },
-                { name: 'Lime desync', color: PALETTE[6], dx: -2, dy: 3, width: 7, label: 'PIXEL' },
-                { name: 'Green signal', color: PALETTE[7], dx: 7, dy: 0, width: -1, label: 'SIGNAL' },
-                { name: 'Yellow overprint', color: PALETTE[4], dx: 0, dy: -3, width: 4, label: 'ERROR' }
+            const definitions = [
+                { name: 'Horizontal mirror', width: imageWidth, height: imageHeight, makeSvg: () => makeSvg(extractedRects.map((rect) => ({ ...rect, x: imageWidth - rect.x - rect.width })), imageWidth, imageHeight) },
+                { name: 'Vertical mirror', width: imageWidth, height: imageHeight, makeSvg: () => makeSvg(extractedRects.map((rect) => ({ ...rect, y: imageHeight - rect.y - rect.height })), imageWidth, imageHeight) },
+                { name: 'Horizontal + vertical mirror', width: imageWidth, height: imageHeight, makeSvg: () => makeSvg(extractedRects.map((rect) => ({ ...rect, x: imageWidth - rect.x - rect.width, y: imageHeight - rect.y - rect.height })), imageWidth, imageHeight) },
+                { name: 'Four-way mirror', width: imageWidth * 2, height: imageHeight * 2, makeSvg: () => makeFourWayMirrorSvg(extractedRects, imageWidth, imageHeight) }
             ];
-            variants = configs.map((config, index) => {
-                const rects = extractedRects.map((rect, i) => {
-                    const isGlitched = i % (index + 2) === 0;
-                    return {
-                        ...rect,
-                        x: Math.max(0, Math.min(imageWidth - 1, rect.x + (isGlitched ? config.dx : 0))),
-                        y: Math.max(0, Math.min(imageHeight - 1, rect.y + (isGlitched ? config.dy : 0))),
-                        width: Math.max(1, rect.width + (isGlitched ? config.width : 0)),
-                        fill: isGlitched ? mixColor(rect.fill, config.color, 0.45) : rect.fill
-                    };
-                });
-                const svg = makeSvg(rects, imageWidth, imageHeight, { label: config.label, textColor: config.color });
-                return { ...config, svg, preview: svgPreviewUrl(svg) };
+            variants = definitions.map((definition) => {
+                const svg = definition.makeSvg();
+                return { ...definition, svg, preview: svgPreviewUrl(svg) };
             });
             renderVariants();
-            selectVariant(variants[0]);
+            selectVariant(variants[3]);
         }
 
         function renderVariants() {
@@ -262,7 +249,7 @@
                 const use = button('Use preview', 'mini-btn', () => selectVariant(variant));
                 const svg = button('Download SVG', 'mini-btn secondary', () => downloadBlob(variant.svg, `${slug(variant.name)}.svg`, 'image/svg+xml'));
                 const png = button('Download PNG', 'mini-btn green', async () => {
-                    try { downloadBlob(await svgToPng(variant.svg), `${slug(variant.name)}.png`, 'image/png'); }
+                    try { downloadBlob(await svgToPng(variant.svg, variant.width, variant.height), `${slug(variant.name)}.png`, 'image/png'); }
                     catch (error) { alert('Could not export PNG: ' + error.message); }
                 });
                 actions.append(use, svg, png);
@@ -282,6 +269,8 @@
 
         function selectVariant(variant) {
             currentSvg = variant.svg;
+            currentSvgWidth = variant.width;
+            currentSvgHeight = variant.height;
             output.value = currentSvg;
             svgPreview.src = variant.preview;
         }
@@ -296,14 +285,14 @@
             link.click();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
         }
-        function svgToPng(svg) {
+        function svgToPng(svg, width, height) {
             return new Promise((resolve, reject) => {
                 const image = new Image();
                 image.onload = () => {
                     const canvas = document.createElement('canvas');
-                    canvas.width = imageWidth;
-                    canvas.height = imageHeight;
-                    canvas.getContext('2d').drawImage(image, 0, 0, imageWidth, imageHeight);
+                    canvas.width = width;
+                    canvas.height = height;
+                    canvas.getContext('2d').drawImage(image, 0, 0, width, height);
                     canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('PNG conversion failed')), 'image/png');
                 };
                 image.onerror = () => reject(new Error('SVG preview could not be rendered'));
@@ -311,15 +300,7 @@
             });
         }
         function rgbHex(r, g, b) { return '#' + [r, g, b].map((value) => value.toString(16).padStart(2, '0')).join('').toUpperCase(); }
-        function mixColor(hex, tint, amount) {
-            const a = hex.slice(1).match(/.{2}/g).map((value) => parseInt(value, 16));
-            const b = tint.slice(1).match(/.{2}/g).map((value) => parseInt(value, 16));
-            return rgbHex(...a.map((value, i) => Math.round(value + (b[i] - value) * amount)));
-        }
-        function escapeXml(value) {
-            return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-        }
-        function slug(value) { return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'glitch'; }
+        function slug(value) { return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'mirror'; }
     </script>
 </body>
 </html>
