@@ -51,14 +51,9 @@
         const intensityValue = document.getElementById('intensity-value');
         let processId = 0;
 
-        glitchIntensity.addEventListener('input', () => {
-            intensityValue.value = `${glitchIntensity.value} px`;
-        });
+        glitchIntensity.addEventListener('input', () => { intensityValue.value = `${glitchIntensity.value} px`; });
         drop.addEventListener('click', () => fileInput.click());
-        drop.addEventListener('dragover', (event) => {
-            event.preventDefault();
-            drop.classList.add('dragging');
-        });
+        drop.addEventListener('dragover', (event) => { event.preventDefault(); drop.classList.add('dragging'); });
         drop.addEventListener('dragleave', () => drop.classList.remove('dragging'));
         drop.addEventListener('drop', (event) => {
             event.preventDefault();
@@ -81,16 +76,16 @@
             const objectUrl = URL.createObjectURL(selectedFile);
 
             try {
-                const img = await loadImage(objectUrl);
-                const width = img.naturalWidth;
-                const height = img.naturalHeight;
+                const image = await loadImage(objectUrl);
+                const width = image.naturalWidth;
+                const height = image.naturalHeight;
                 const sourceCanvas = document.createElement('canvas');
                 sourceCanvas.width = width;
                 sourceCanvas.height = height;
                 const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true });
-                sourceContext.drawImage(img, 0, 0);
+                sourceContext.drawImage(image, 0, 0);
 
-                // Extract horizontal pixel runs, parse their SVG rect elements, and convert them to paths.
+                // Extract rectangle elements, parse them back, and convert each rectangle to SVG path data.
                 const initial = pixelsToSvg(sourceContext.getImageData(0, 0, width, height).data, width, height);
                 const shapes = readSvgRectangles(initial.svg);
                 const pathSvg = rectanglesToPaths(shapes, width, height);
@@ -99,8 +94,8 @@
                     pathCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, width, height).data,
                     width, height
                 );
-
                 if (thisProcess !== processId) return;
+
                 addResultCard('Rectangle SVG', `${initial.rectCount.toLocaleString()} extracted rectangles`, initial.svg, sourceCanvas, 'rectangles');
                 addResultCard('Path SVG', `${shapes.length.toLocaleString()} rectangle elements converted to grouped path data`, pathSvg, pathCanvas, 'paths');
                 addResultCard('Path reread SVG', `${reread.rectCount.toLocaleString()} rectangles rebuilt from the rendered paths`, reread.svg, pathCanvas, 'paths-reread');
@@ -109,7 +104,6 @@
                 const intensity = Number(glitchIntensity.value);
                 for (let variation = 1; variation <= count; variation++) {
                     if (thisProcess !== processId) return;
-                    // Shift clipped horizontal bands of the path artwork to create a linear glitch.
                     const glitchedSvg = glitchPathSvg(pathSvg, width, height, variation, intensity);
                     const glitchedCanvas = await renderSvgToCanvas(glitchedSvg, width, height);
                     const glitchedPixels = glitchedCanvas.getContext('2d', { willReadFrequently: true })
@@ -168,9 +162,7 @@
             return { svg: lines.join(''), rectCount };
         }
 
-        function toHex(value) {
-            return value.toString(16).padStart(2, '0');
-        }
+        function toHex(value) { return value.toString(16).padStart(2, '0'); }
 
         function writeRect(x, y, width, color, alpha) {
             const opacity = alpha < 1 ? ` fill-opacity="${Number(alpha.toFixed(8))}"` : '';
@@ -208,24 +200,22 @@
         }
 
         function glitchPathSvg(pathSvg, width, height, variation, maxShift) {
-            const bodyStart = pathSvg.indexOf('>') + 1;
-            const artwork = pathSvg.slice(bodyStart, pathSvg.lastIndexOf('</svg>'));
+            const artwork = pathSvg.slice(pathSvg.indexOf('>') + 1, pathSvg.lastIndexOf('</svg>'));
             const bandHeight = Math.max(2, Math.ceil(height / (10 + variation * 2)));
             const random = seededRandom(variation * 7919 + width * 17 + height);
-            const pieces = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">\n<defs>\n`];
+            const clipDefinitions = [];
+            const shiftedBands = [];
             let band = 0;
+
             for (let y = 0; y < height; y += bandHeight, band++) {
                 const currentHeight = Math.min(bandHeight, height - y);
                 const shift = Math.round((random() * 2 - 1) * maxShift);
-                pieces.push(`<clipPath id="band-${band}"><rect x="0" y="${y}" width="${width}" height="${currentHeight}" /></clipPath>\n`);
-                pieces.push(`<g clip-path="url(#band-${band})"><g transform="translate(${shift} 0)">${artwork}</g></g>\n`);
+                clipDefinitions.push(`<clipPath id="band-${variation}-${band}"><rect x="0" y="${y}" width="${width}" height="${currentHeight}" /></clipPath>`);
+                shiftedBands.push(`<g clip-path="url(#band-${variation}-${band})"><g transform="translate(${shift} 0)">${artwork}</g></g>`);
             }
-            pieces.push('</defs>');
-            // Clip paths must be defined before the artwork that references them.
-            const definitionsEnd = pieces.join('').indexOf('</defs>') + '</defs>'.length;
-            const definitions = pieces.join('').slice(0, definitionsEnd);
-            const bands = pieces.join('').slice(definitionsEnd);
-            return `${definitions}\n${bands}</svg>`;
+
+            // Keep clip paths in defs, but put the clipped artwork after defs so the bands render.
+            return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">\n<defs>${clipDefinitions.join('\n')}</defs>\n${shiftedBands.join('\n')}\n</svg>`;
         }
 
         function seededRandom(seed) {
