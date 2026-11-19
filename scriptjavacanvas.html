@@ -43,7 +43,6 @@
   });
   drop.addEventListener('dragleave', () => drop.classList.remove('dragging'));
   drop.addEventListener('drop', event => {
-    event.preventEvent = event.preventDefault;
     event.preventDefault();
     drop.classList.remove('dragging');
     processFile(event.dataTransfer.files[0]);
@@ -103,20 +102,23 @@
       const totalTiles = Math.ceil(width / TILE_SIZE) * Math.ceil(height / TILE_SIZE);
       let completedTiles = 0;
 
+      // Process each tile-row as a group. Buffering that tile-row's runs by source
+      // row lets us emit globally sorted [y, xStart, xEnd, paletteIndex] tuples,
+      // even when an image spans multiple horizontal tiles.
       for (let tileY = 0; tileY < height; tileY += TILE_SIZE) {
+        const tileHeight = Math.min(TILE_SIZE, height - tileY);
+        const rowRuns = Array.from({ length: tileHeight }, () => []);
+
         for (let tileX = 0; tileX < width; tileX += TILE_SIZE) {
           if (thisRun !== runId) return;
 
           const tileWidth = Math.min(TILE_SIZE, width - tileX);
-          const tileHeight = Math.min(TILE_SIZE, height - tileY);
           tileCanvas.width = tileWidth;
           tileCanvas.height = tileHeight;
           tileContext.drawImage(image, tileX, tileY, tileWidth, tileHeight, 0, 0, tileWidth, tileHeight);
-
           const pixels = tileContext.getImageData(0, 0, tileWidth, tileHeight).data;
 
           for (let y = 0; y < tileHeight; y++) {
-            const sourceY = tileY + y;
             let runStart = -1;
             let runColor = null;
 
@@ -139,7 +141,7 @@
                   palette.push(runColor);
                   paletteMap.set(runColor, paletteIndex);
                 }
-                runs.push([sourceY, runStart + tileX, x - 1 + tileX, paletteIndex]);
+                rowRuns[y].push([tileY + y, runStart + tileX, x - 1 + tileX, paletteIndex]);
                 runStart = -1;
                 runColor = null;
               }
@@ -154,6 +156,8 @@
           completedTiles++;
           status.textContent = `Converting image… ${Math.floor(completedTiles / totalTiles * 100)}%`;
         }
+
+        for (const row of rowRuns) runs.push(...row);
         await new Promise(resolve => setTimeout(resolve, 0));
       }
 
@@ -194,7 +198,7 @@
       currentBlob = new Blob(scriptParts, { type: 'text/javascript;charset=utf-8' });
       downloadButton.disabled = false;
       drop.textContent = 'Success! Drop another image or click to choose one.';
-      status.textContent = `Script ready (${width} × ${height}; ${palette.length.toLocaleString()} colors; ${runs.length.toLocaleString()} runs).`;
+      status.textContent = `Script ready (${width} × ${height}; ${palette.length.toLocaleString()} colors; ${runs.length.toLocaleString()} runs, sorted by row and x).`;
     } catch (error) {
       if (thisRun === runId) {
         currentBlob = null;
