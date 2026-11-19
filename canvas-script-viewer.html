@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Canvas Run Script Viewer Studio</title>
+<style>
+  :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; display: grid; grid-template-columns: 280px 1fr; grid-template-rows: 54px 1fr 34px; grid-template-areas: "header header" "side stage" "footer footer"; overflow: hidden; background: #0d1015; color: #e5e7eb; }
+  header { grid-area: header; display:flex; align-items:center; justify-content:space-between; padding: 0 1rem; background:#161b22; border-bottom:1px solid #303744; }
+  aside { grid-area: side; overflow:auto; padding: .9rem; background:#181e27; border-right:1px solid #303744; }
+  main { grid-area: stage; position:relative; overflow:hidden; background-color:#10151d; background-image:linear-gradient(45deg,#1b222d 25%,transparent 25%),linear-gradient(-45deg,#1b222d 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#1b222d 75%),linear-gradient(-45deg,transparent 75%,#1b222d 75%); background-size:24px 24px; background-position:0 0,0 12px,12px -12px,-12px 0; cursor:grab; user-select:none; }
+  main.dragging { outline:2px dashed #60a5fa; outline-offset:-5px; }
+  canvas { display:block; image-rendering:pixelated; }
+  footer { grid-area:footer; display:flex; align-items:center; padding:0 .9rem; background:#161b22; border-top:1px solid #303744; color:#34d399; font-size:.8rem; }
+  footer.error { color:#f87171; }
+  .panel { padding:.75rem; margin-bottom:.8rem; border:1px solid #374151; background:#202733; border-radius:6px; }
+  .panel h2 { margin:0 0 .65rem; font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; color:#9ca3af; }
+  .btn { display:inline-flex; align-items:center; justify-content:center; padding:.48rem .7rem; border:1px solid #4b5563; border-radius:5px; background:#293241; color:#fff; font:inherit; font-size:.8rem; cursor:pointer; }
+  .btn.primary { background:#2563eb; border-color:#3b82f6; }
+  .btn:disabled { opacity:.45; cursor:not-allowed; }
+  .full { width:100%; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:.45rem; }
+  .stat { display:flex; justify-content:space-between; gap:.5rem; padding:.3rem 0; border-bottom:1px solid #374151; font-size:.8rem; }
+  .stat:last-child { border:0; }
+  .zoom-label { display:flex; justify-content:space-between; font-size:.8rem; }
+  input[type=range] { width:100%; accent-color:#3b82f6; }
+  #progress { height:4px; background:#273244; border-radius:3px; margin-top:.7rem; overflow:hidden; }
+  #progressBar { width:0;height:100%;background:#3b82f6;transition:width .12s; }
+  .hint { position:absolute; inset:auto; left:50%; top:50%; transform:translate(-50%,-50%); width:min(440px,90%); padding:1.6rem; text-align:center; color:#cbd5e1; border:1px dashed #526071; border-radius:8px; background:#161b22e8; line-height:1.6; pointer-events:none; }
+  small { color:#9ca3af; }
+  @media(max-width:700px) { body { grid-template-columns:1fr; grid-template-rows:48px auto 1fr 34px; grid-template-areas:"header" "side" "stage" "footer"; } aside { max-height:34vh; border-right:0; border-bottom:1px solid #303744; display:grid; grid-template-columns:1fr 1fr; gap:.5rem; } .panel { margin:0; } }
+</style>
+</head>
+<body>
+<header>
+  <strong>Canvas Run Script Viewer Studio</strong>
+  <label class="btn primary">Open JS / TXT <input id="fileInput" type="file" accept=".js,.txt,text/javascript,text/plain" hidden></label>
+</header>
+<aside>
+  <section class="panel">
+    <h2>Viewport</h2>
+    <div class="zoom-label"><span>Zoom</span><b id="zoomLabel">1×</b></div>
+    <input id="zoom" type="range" min="0.0001" max="32" step="0.0001" value="1" disabled>
+    <div class="grid">
+      <button class="btn" id="fitBtn" disabled>Fit</button>
+      <button class="btn" id="oneBtn" disabled>1:1</button>
+    </div>
+    <button class="btn full" id="exportBtn" disabled style="margin-top:.45rem">Export View PNG</button>
+    <div id="progress"><div id="progressBar"></div></div>
+  </section>
+  <section class="panel">
+    <h2>File information</h2>
+    <div class="stat"><span>Dimensions</span><b id="dimensions">—</b></div>
+    <div class="stat"><span>Pixels</span><b id="pixels">—</b></div>
+    <div class="stat"><span>Palette colors</span><b id="paletteCount">—</b></div>
+    <div class="stat"><span>Run segments</span><b id="runCount">—</b></div>
+    <div class="stat"><span>Parse time</span><b id="parseTime">—</b></div>
+  </section>
+  <section class="panel"><h2>Safe local parsing</h2><small>The file is never executed. The viewer reads only the dimensions, PALETTE and RUNS data arrays, then draws those runs to canvas. Large files are parsed in a background worker.</small></section>
+</aside>
+<main id="stage" aria-label="Canvas preview area">
+  <div class="hint" id="hint"><strong>Drop a generated canvas script here</strong><br>or use <b>Open JS / TXT</b>.<br><small>Supports palette/run scripts. Drag to pan and use the wheel to zoom.</small></div>
+  <canvas id="view"></canvas>
+</main>
+<footer id="status" role="status" aria-live="polite">Ready — choose a script file</footer>
+
+<script id="workerSource" type="javascript/worker">
+self.onmessage = async ({ data: file }) => {
+  const started = performance.now();
+  let reader;
+  try {
+    reader = file.stream().getReader();
+    const decoder = new TextDecoder();
+    let bytesRead = 0;
+    let metaText = '';
+    let palette = null;
+    let palettePending = '';
+    let runPending = '';
+    let inRuns = false;
+    let width = 0, height = 0, count = 0;
+    let capacity = 65536;
+    let ys = new Uint32Array(capacity);
+    let xStarts = new Uint32Array(capacity);
+    let xEnds = new Uint32Array(capacity);
+    let colors = new Uint16Array(capacity);
+    const tuplePattern = /\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]/g;
+
+    const ensureCapacity = () => {
+      if (count < capacity) return;
+      const nextCapacity = capacity * 2;
+      const nextY = new Uint32Array(nextCapacity); nextY.set(ys); ys = nextY;
+      const nextXStart = new Uint32Array(nextCapacity); nextXStart.set(xStarts); xStarts = nextXStart;
+      const nextXEnd = new Uint32Array(nextCapacity); nextXEnd.set(xEnds); xEnds = nextXEnd;
+      const nextColor = new Uint16Array(nextCapacity); nextColor.set(colors); colors = nextColor;
+      capacity = nextCapacity;
+    };
+
+    const parseChunk = text => {
+      if (metaText.length < 16384) metaText += text.slice(0, 16384 - metaText.length);
+      if (!width) {
+        const dimMatch = metaText.match(/Source dimensions:\s*(\d+)\s*x\s*(\d+)/i);
+        const constMatch = metaText.match(/\bWIDTH\s*=\s*(\d+)\s*,\s*HEIGHT\s*=\s*(\d+)/i);
+        const match = dimMatch || constMatch;
+        if (match) { width = Number(match[1]); height = Number(match[2]); }
+      }
+
+      if (!palette) {
+        palettePending += text;
+        const assignment = palettePending.search(/\bPALETTE\s*=/);
+        if (assignment !== -1) {
+          palettePending = palettePending.slice(assignment);
+          const open = palettePending.indexOf('[');
+          if (open !== -1) {
+            const close = palettePending.indexOf(']', open + 1);
+            if (close !== -1) {
+              palette = JSON.parse(palettePending.slice(open, close + 1));
+              if (!Array.isArray(palette) || palette.length > 65535 || palette.some(c => typeof c !== 'string')) {
+                throw new Error('Invalid or excessively large PALETTE array.');
+              }
+              palettePending = '';
+            } else if (palettePending.length > 16 * 1024 * 1024) {
+              throw new Error('PALETTE array exceeds the 16 MB safety limit.');
+            }
+          }
+        } else {
+          palettePending = palettePending.slice(-128);
+        }
+      }
+
+      if (palette) {
+        runPending += text;
+        if (!inRuns) {
+          const assignment = runPending.search(/\bRUNS\s*=/);
+          if (assignment !== -1) {
+            const open = runPending.indexOf('[', assignment);
+            if (open !== -1) {
+              inRuns = true;
+              runPending = runPending.slice(open + 1);
+            } else {
+              runPending = runPending.slice(assignment);
+            }
+          } else {
+            runPending = runPending.slice(-128);
+          }
+        }
+        if (inRuns) {
+          tuplePattern.lastIndex = 0;
+          let match;
+          let consumed = 0;
+          while ((match = tuplePattern.exec(runPending)) !== null) {
+            const y = Number(match[1]), x1 = Number(match[2]), x2 = Number(match[3]), color = Number(match[4]);
+            if (![y, x1, x2, color].every(Number.isSafeInteger) || y > 0xffffffff || x1 > 0xffffffff || x2 > 0xffffffff || color >= palette.length || x2 < x1) {
+              throw new Error('RUNS contains an invalid coordinate or palette index.');
+            }
+            ensureCapacity();
+            ys[count] = y; xStarts[count] = x1; xEnds[count] = x2; colors[count] = color;
+            count++;
+            if (y + 1 > height) height = y + 1;
+            if (x2 + 1 > width) width = x2 + 1;
+            consumed = tuplePattern.lastIndex;
+          }
+          if (consumed) runPending = runPending.slice(consumed);
+          if (runPending.length > 1024 * 1024) runPending = runPending.slice(-256);
+        }
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytesRead += value.byteLength;
+      parseChunk(decoder.decode(value, { stream: true }));
+      self.postMessage({ type: 'progress', percent: file.size ? Math.min(99, Math.floor(bytesRead / file.size * 100)) : 0, runs: count });
+    }
+    const finalText = decoder.decode();
+    if (finalText) parseChunk(finalText);
+    if (!palette || !palette.length) throw new Error('Could not find a valid JSON PALETTE array.');
+    if (!count) throw new Error('Could not find valid RUNS entries.');
+    if (!width || !height || width > 0xffffffff || height > 0xffffffff || width * height > Number.MAX_SAFE_INTEGER) throw new Error('Image dimensions are missing or invalid.');
+
+    ys = ys.slice(0, count); xStarts = xStarts.slice(0, count); xEnds = xEnds.slice(0, count); colors = colors.slice(0, count);
+    self.postMessage({ type: 'complete', width, height, count, palette, milliseconds: (performance.now() - started).toFixed(1), ys: ys.buffer, xStarts: xStarts.buffer, xEnds: xEnds.buffer, colors: colors.buffer }, [ys.buffer, xStarts.buffer, xEnds.buffer, colors.buffer]);
+  } catch (error) {
+    try { await reader?.cancel(); } catch (_) {}
+    self.postMessage({ type: 'error', message: error.message || 'Could not parse this file.' });
+  }
+};
+</script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const stage = $('stage'), canvas = $('view'), context = canvas.getContext('2d');
+  const workerUrl = URL.createObjectURL(new Blob([$('workerSource').textContent], { type: 'text/javascript' }));
+  let worker = null, loadId = 0, state = null;
+  let zoom = 1, panX = 0, panY = 0, raf = 0, dragging = false, dragX = 0, dragY = 0;
+
+  function setStatus(message, error = false) { $('status').textContent = message; $('status').classList.toggle('error', error); }
+  function resize() { canvas.width = stage.clientWidth; canvas.height = stage.clientHeight; scheduleDraw(); }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function load(file) {
+    if (!file) return;
+    const id = ++loadId;
+    if (worker) worker.terminate();
+    worker = new Worker(workerUrl);
+    state = null;
+    $('hint').hidden = false;
+    $('progressBar').style.width = '0%';
+    ['zoom','fitBtn','oneBtn','exportBtn'].forEach(key => $(key).disabled = true);
+    $('dimensions').textContent = $('pixels').textContent = $('paletteCount').textContent = $('runCount').textContent = $('parseTime').textContent = '—';
+    setStatus(`Reading ${file.name} (${formatBytes(file.size)}) in a background worker…`);
+    worker.onmessage = ({ data }) => {
+      if (id !== loadId) return;
+      if (data.type === 'progress') {
+        $('progressBar').style.width = `${data.percent}%`;
+        $('runCount').textContent = data.runs.toLocaleString();
+      } else if (data.type === 'error') {
+        setStatus(`Could not preview file: ${data.message}`, true);
+        worker.terminate(); worker = null;
+      } else if (data.type === 'complete') {
+        state = {
+          width: data.width, height: data.height, count: data.count, palette: data.palette,
+          ys: new Uint32Array(data.ys), xStarts: new Uint32Array(data.xStarts),
+          xEnds: new Uint32Array(data.xEnds), colors: new Uint16Array(data.colors)
+        };
+        $('progressBar').style.width = '100%';
+        $('dimensions').textContent = `${data.width.toLocaleString()} × ${data.height.toLocaleString()}`;
+        $('pixels').textContent = (data.width * data.height).toLocaleString();
+        $('paletteCount').textContent = data.palette.length.toLocaleString();
+        $('runCount').textContent = data.count.toLocaleString();
+        $('parseTime').textContent = `${data.milliseconds} ms`;
+        $('hint').hidden = true;
+        ['zoom','fitBtn','oneBtn','exportBtn'].forEach(key => $(key).disabled = false);
+        fit();
+        setStatus(`Ready: ${data.count.toLocaleString()} runs parsed from ${file.name}.`);
+        worker.terminate(); worker = null;
+      }
+    };
+    worker.onerror = event => {
+      if (id === loadId) setStatus(`Worker error: ${event.message}`, true);
+      worker?.terminate(); worker = null;
+    };
+    worker.postMessage(file);
+  }
+
+  function lowerBoundY(y) {
+    let low = 0, high = state.count;
+    while (low < high) { const mid = (low + high) >>> 1; if (state.ys[mid] < y) low = mid + 1; else high = mid; }
+    return low;
+  }
+  function scheduleDraw() { if (!state || raf) return; raf = requestAnimationFrame(() => { raf = 0; draw(); }); }
+  function draw() {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    if (!state) return;
+    context.imageSmoothingEnabled = false;
+    const { width, height, ys, xStarts, xEnds, colors, palette } = state;
+    const x0 = Math.max(0, Math.floor(-panX / zoom));
+    const x1 = Math.min(width, Math.ceil((canvas.width - panX) / zoom));
+    const y0 = Math.max(0, Math.floor(-panY / zoom));
+    const y1 = Math.min(height, Math.ceil((canvas.height - panY) / zoom));
+    if (x0 >= x1 || y0 >= y1) return;
+    let index = lowerBoundY(y0);
+    const yStride = zoom < 1 ? Math.max(1, Math.floor(1 / zoom)) : 1;
+    const maxDraws = 500000;
+    let drawn = 0;
+    for (let y = y0; y < y1; y += yStride) {
+      while (index < state.count && ys[index] === y) {
+        const left = Math.max(x0, xStarts[index]);
+        const right = Math.min(x1, xEnds[index] + 1);
+        if (left < right) {
+          context.fillStyle = palette[colors[index]];
+          context.fillRect(panX + left * zoom, panY + y * zoom, (right - left) * zoom, Math.max(zoom, 1));
+          if (++drawn >= maxDraws) break;
+        }
+        index++;
+      }
+      if (drawn >= maxDraws) break;
+      while (index < state.count && ys[index] < y + yStride) index++;
+    }
+    if (drawn >= maxDraws) setStatus('Preview limited to 500,000 visible run segments per frame. Zoom in or pan to inspect smaller areas.');
+  }
+
+  function setZoom(value, anchorX = canvas.width / 2, anchorY = canvas.height / 2) {
+    if (!state) return;
+    const next = Math.max(0.0001, Math.min(32, value));
+    const imageX = (anchorX - panX) / zoom;
+    const imageY = (anchorY - panY) / zoom;
+    zoom = next;
+    panX = anchorX - imageX * zoom;
+    panY = anchorY - imageY * zoom;
+    $('zoom').value = zoom;
+    $('zoomLabel').textContent = `${zoom < 0.01 ? zoom.toPrecision(2) : zoom.toFixed(2)}×`;
+    scheduleDraw();
+  }
+  function fit() {
+    if (!state) return;
+    const scale = Math.min((canvas.width - 40) / state.width, (canvas.height - 40) / state.height);
+    zoom = Math.max(0.0001, Math.min(32, scale));
+    panX = (canvas.width - state.width * zoom) / 2;
+    panY = (canvas.height - state.height * zoom) / 2;
+    $('zoom').value = zoom;
+    $('zoomLabel').textContent = `${zoom < 0.01 ? zoom.toPrecision(2) : zoom.toFixed(2)}×`;
+    scheduleDraw();
+  }
+  function formatBytes(bytes) { return bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`; }
+
+  $('fileInput').addEventListener('change', event => { load(event.target.files[0]); event.target.value = ''; });
+  $('zoom').addEventListener('input', event => setZoom(Number(event.target.value)));
+  $('fitBtn').addEventListener('click', fit);
+  $('oneBtn').addEventListener('click', () => { zoom = 1; panX = 0; panY = 0; $('zoom').value = 1; $('zoomLabel').textContent = '1.00×'; scheduleDraw(); });
+  stage.addEventListener('wheel', event => { if (!state) return; event.preventDefault(); const rect = canvas.getBoundingClientRect(); setZoom(zoom * (event.deltaY < 0 ? 1.15 : 1 / 1.15), event.clientX - rect.left, event.clientY - rect.top); }, { passive: false });
+  stage.addEventListener('pointerdown', event => { if (!state) return; dragging = true; dragX = event.clientX - panX; dragY = event.clientY - panY; stage.setPointerCapture(event.pointerId); });
+  stage.addEventListener('pointermove', event => { if (!dragging) return; panX = event.clientX - dragX; panY = event.clientY - dragY; scheduleDraw(); });
+  stage.addEventListener('pointerup', () => { dragging = false; });
+  stage.addEventListener('pointercancel', () => { dragging = false; });
+  stage.addEventListener('dragover', event => { event.preventDefault(); stage.classList.add('dragging'); });
+  stage.addEventListener('dragleave', () => stage.classList.remove('dragging'));
+  stage.addEventListener('drop', event => { event.preventDefault(); stage.classList.remove('dragging'); load(event.dataTransfer.files[0]); });
+  $('exportBtn').addEventListener('click', () => {
+    if (!state) return;
+    canvas.toBlob(blob => {
+      if (!blob) { setStatus('Could not export the current viewport as PNG.', true); return; }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a'); link.href = url; link.download = 'canvas-script-view.png'; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setStatus('Current viewport exported as PNG.');
+    }, 'image/png');
+  });
+})();
+</script>
+</body>
+</html>
