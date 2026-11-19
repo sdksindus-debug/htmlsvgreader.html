@@ -42,7 +42,6 @@
 
         drop.addEventListener('click', () => fileInput.click());
         drop.addEventListener('dragover', (event) => {
-            event.preventEvent = event.preventDefault;
             event.preventDefault();
             drop.classList.add('dragging');
         });
@@ -87,7 +86,7 @@
                     const context = tileCanvas.getContext('2d', { willReadFrequently: true });
                     if (!context) throw new Error('This browser could not create a canvas context.');
 
-                    const chunks = [`Dimensions: ${width} x ${height}\n\n`];
+                    const chunks = [`Dimensions: ${width} x ${height}\n`];
                     const totalTiles = Math.ceil(width / TILE_SIZE) * Math.ceil(height / TILE_SIZE);
                     let completedTiles = 0;
 
@@ -117,7 +116,7 @@
                                         row += `${hex} `;
                                     }
                                 }
-                                chunks.push(row + '\n');
+                                chunks.push(row.trimEnd() + '\n');
                             }
 
                             completedTiles++;
