@@ -1,36 +1,33 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Image → Canvas Script Generator</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Image to Canvas Script Generator</title>
   <style>
-    body { font-family: monospace; max-width: 900px; margin: 20px auto; padding: 20px; color: #222; }
-    .drop-box { border: 2px dashed #333; padding: 30px; text-align: center; cursor: pointer; background: #f9f9f9; user-select: none; }
+    body { font-family: monospace; max-width: 900px; margin: 20px auto; padding: 20px; }
+    .drop-box { border: 2px dashed #333; padding: 30px; text-align: center; cursor: pointer; background: #f9f9f9; }
     .drop-box.dragging { background: #e8f2ff; border-color: #1769aa; }
-    .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 16px 0; }
-    button { padding: 9px 14px; cursor: pointer; font-family: inherit; }
+    button { padding: 9px 14px; cursor: pointer; }
     button:disabled { cursor: not-allowed; opacity: .5; }
     #status { min-height: 1.4em; }
   </style>
 </head>
 <body>
-  <h2>Image → Canvas Script</h2>
-  <div id="drop" class="drop-box" tabindex="0" role="button" aria-controls="file">Click or drop an image to generate a JavaScript file with palette and run arrays</div>
-  <input id="file" type="file" accept="image/*" hidden />
+  <h2>Image to Canvas Script Generator</h2>
+  <div id="drop" class="drop-box" tabindex="0" role="button">Click or Drop an Image</div>
+  <input id="file" type="file" accept="image/*" hidden>
   <p id="status" role="status" aria-live="polite">Choose an image to begin.</p>
-  <div class="controls">
-    <button id="downloadBtn" type="button" disabled>Download Complete Script</button>
-  </div>
+  <button id="download" type="button" disabled>Download Script</button>
 
 <script>
 (() => {
   const drop = document.getElementById('drop');
   const fileInput = document.getElementById('file');
   const status = document.getElementById('status');
-  const downloadBtn = document.getElementById('downloadBtn');
+  const downloadButton = document.getElementById('download');
   const TILE_SIZE = 256;
-  let currentScriptBlob = null;
+  let currentBlob = null;
   let runId = 0;
 
   drop.addEventListener('click', () => fileInput.click());
@@ -46,6 +43,7 @@
   });
   drop.addEventListener('dragleave', () => drop.classList.remove('dragging'));
   drop.addEventListener('drop', event => {
+    event.preventEvent = event.preventDefault;
     event.preventDefault();
     drop.classList.remove('dragging');
     processFile(event.dataTransfer.files[0]);
@@ -54,7 +52,15 @@
     processFile(event.target.files[0]);
     fileInput.value = '';
   });
-  downloadBtn.addEventListener('click', downloadScript);
+  downloadButton.addEventListener('click', () => {
+    if (!currentBlob) return;
+    const url = URL.createObjectURL(currentBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'canvas-lines-compact.js';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
 
   async function processFile(file) {
     if (!file) return;
@@ -64,9 +70,10 @@
     }
 
     const thisRun = ++runId;
-    currentScriptBlob = null;
-    downloadBtn.disabled = true;
+    currentBlob = null;
+    downloadButton.disabled = true;
     status.textContent = 'Loading image…';
+
     const objectUrl = URL.createObjectURL(file);
     const image = new Image();
     image.decoding = 'async';
@@ -77,18 +84,18 @@
         image.onerror = () => reject(new Error('The selected file could not be loaded as an image.'));
         image.src = objectUrl;
       });
+
       if (thisRun !== runId) return;
 
       const width = image.naturalWidth;
       const height = image.naturalHeight;
-      const pixelCount = width * height;
-      if (!width || !height || !Number.isSafeInteger(pixelCount)) {
+      if (!width || !height || !Number.isSafeInteger(width * height)) {
         throw new Error('The image dimensions are invalid or too large to process.');
       }
 
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d', { willReadFrequently: true });
-      if (!context) throw new Error('This browser could not create a canvas context.');
+      const tileCanvas = document.createElement('canvas');
+      const tileContext = tileCanvas.getContext('2d', { willReadFrequently: true });
+      if (!tileContext) throw new Error('This browser could not create a canvas context.');
 
       const palette = [];
       const paletteMap = new Map();
@@ -96,28 +103,33 @@
       const totalTiles = Math.ceil(width / TILE_SIZE) * Math.ceil(height / TILE_SIZE);
       let completedTiles = 0;
 
-      // Tile reads keep temporary pixel memory bounded. The exported data remains
-      // complete: every nontransparent source pixel is represented in PALETTE/RUNS.
       for (let tileY = 0; tileY < height; tileY += TILE_SIZE) {
         for (let tileX = 0; tileX < width; tileX += TILE_SIZE) {
           if (thisRun !== runId) return;
+
           const tileWidth = Math.min(TILE_SIZE, width - tileX);
           const tileHeight = Math.min(TILE_SIZE, height - tileY);
-          canvas.width = tileWidth;
-          canvas.height = tileHeight;
-          context.drawImage(image, tileX, tileY, tileWidth, tileHeight, 0, 0, tileWidth, tileHeight);
-          const pixels = context.getImageData(0, 0, tileWidth, tileHeight).data;
+          tileCanvas.width = tileWidth;
+          tileCanvas.height = tileHeight;
+          tileContext.drawImage(image, tileX, tileY, tileWidth, tileHeight, 0, 0, tileWidth, tileHeight);
+
+          const pixels = tileContext.getImageData(0, 0, tileWidth, tileHeight).data;
 
           for (let y = 0; y < tileHeight; y++) {
             const sourceY = tileY + y;
             let runStart = -1;
             let runColor = null;
+
             for (let x = 0; x <= tileWidth; x++) {
               const index = x < tileWidth ? (y * tileWidth + x) * 4 : -1;
               const alpha = x < tileWidth ? pixels[index + 3] : 0;
               let color = null;
+
               if (x < tileWidth && alpha > 0) {
-                color = `rgba(${pixels[index]},${pixels[index + 1]},${pixels[index + 2]},${alpha / 255})`;
+                const r = pixels[index];
+                const g = pixels[index + 1];
+                const b = pixels[index + 2];
+                color = `rgba(${r},${g},${b},${(alpha / 255).toFixed(3)})`;
               }
 
               if (runStart >= 0 && color !== runColor) {
@@ -131,6 +143,7 @@
                 runStart = -1;
                 runColor = null;
               }
+
               if (color !== null && runStart < 0) {
                 runStart = x;
                 runColor = color;
@@ -139,72 +152,58 @@
           }
 
           completedTiles++;
-          status.textContent = `Extracting complete palette and run data… ${Math.floor(completedTiles / totalTiles * 100)}%`;
+          status.textContent = `Converting image… ${Math.floor(completedTiles / totalTiles * 100)}%`;
         }
         await new Promise(resolve => setTimeout(resolve, 0));
       }
+
       if (thisRun !== runId) return;
 
-      // Store JSON as Blob parts so the whole generated script need not also be
-      // duplicated into one large in-memory string.
       const scriptParts = [
-        '// Complete Canvas Pixel Script: palette and horizontal run arrays\n',
+        '// Compact Canvas Line Script\n',
+        '// Usage: const c = document.getElementById("myCanvas"); const ctx = c.getContext("2d");\n',
         `// Source dimensions: ${width} x ${height}\n`,
-        `const WIDTH=${width},HEIGHT=${height};\n`,
-        'const PALETTE='
+        'ctx.lineWidth = 1;\n',
+        'const PALETTE = ['
       ];
-      appendJsonArrayParts(scriptParts, palette);
-      scriptParts.push(';\nconst RUNS=');
-      appendJsonArrayParts(scriptParts, runs);
-      scriptParts.push(';\n',
-        '(()=>{\n',
-        '  let canvas=document.getElementById("myCanvas");\n',
-        '  if(!canvas){canvas=document.createElement("canvas");canvas.id="myCanvas";document.body.appendChild(canvas);}\n',
-        '  canvas.width=WIDTH;canvas.height=HEIGHT;\n',
-        '  canvas.style.imageRendering="pixelated";canvas.style.imageRendering="crisp-edges";\n',
-        '  const ctx=canvas.getContext("2d");if(!ctx)throw new Error("Could not create a 2D canvas context.");\n',
-        '  ctx.imageSmoothingEnabled=false;\n',
-        '  for(let i=0;i<RUNS.length;i++){const r=RUNS[i];ctx.fillStyle=PALETTE[r[3]];ctx.fillRect(r[1],r[0],r[2]-r[1]+1,1);}\n',
-        '})();\n'
+
+      for (let i = 0; i < palette.length; i++) {
+        if (i) scriptParts.push(',');
+        scriptParts.push(JSON.stringify(palette[i]));
+      }
+
+      scriptParts.push('];\nconst RUNS = [');
+      for (let i = 0; i < runs.length; i++) {
+        if (i) scriptParts.push(',');
+        scriptParts.push(JSON.stringify(runs[i]));
+      }
+
+      scriptParts.push(
+        '];\n',
+        '// Replay compressed runs (fast, compact)\n',
+        'for (let i = 0, L = RUNS.length; i < L; i++) {\n',
+        '  const r = RUNS[i];\n',
+        '  const y = r[0] + 0.5;\n',
+        '  const x0 = r[1] + 0.5;\n',
+        '  const x1 = r[2] + 0.5;\n',
+        '  ctx.strokeStyle = PALETTE[r[3]];\n',
+        '  ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();\n',
+        '}\n'
       );
-      currentScriptBlob = new Blob(scriptParts, { type: 'text/javascript;charset=utf-8' });
-      downloadBtn.disabled = false;
+
+      currentBlob = new Blob(scriptParts, { type: 'text/javascript;charset=utf-8' });
+      downloadButton.disabled = false;
       drop.textContent = 'Success! Drop another image or click to choose one.';
-      status.textContent = `Complete script ready (${width.toLocaleString()} × ${height.toLocaleString()}; ${palette.length.toLocaleString()} palette colors; ${runs.length.toLocaleString()} runs; ${formatBytes(currentScriptBlob.size)}). Download to save PALETTE and RUNS arrays.`;
+      status.textContent = `Script ready (${width} × ${height}; ${palette.length.toLocaleString()} colors; ${runs.length.toLocaleString()} runs).`;
     } catch (error) {
       if (thisRun === runId) {
-        currentScriptBlob = null;
-        downloadBtn.disabled = true;
+        currentBlob = null;
+        downloadButton.disabled = true;
         status.textContent = 'Could not process image: ' + error.message;
       }
     } finally {
       URL.revokeObjectURL(objectUrl);
     }
-  }
-
-  function appendJsonArrayParts(parts, array) {
-    parts.push('[');
-    for (let i = 0; i < array.length; i++) {
-      if (i) parts.push(',');
-      parts.push(JSON.stringify(array[i]));
-    }
-    parts.push(']');
-  }
-
-  function formatBytes(bytes) {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  function downloadScript() {
-    if (!currentScriptBlob) return;
-    const url = URL.createObjectURL(currentScriptBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'canvas-palette-runs.js';
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 })();
 </script>
