@@ -12,25 +12,18 @@
         button { padding: 9px 14px; cursor: pointer; }
         button:disabled { cursor: not-allowed; opacity: .5; }
         textarea { box-sizing: border-box; width: 100%; height: 300px; margin-top: 12px; font-family: monospace; background: #222; color: #0f0; padding: 10px; }
-        .preview-wrap { margin-top: 20px; }
-        #preview { display: block; max-width: 100%; height: auto; margin-top: 8px; border: 1px solid #ccc; image-rendering: pixelated; }
         #status { min-height: 1.4em; }
     </style>
 </head>
 <body>
-    <div class="drop-box" id="drop">Click or drop an image here to extract optimized SVG rows</div>
+    <div class="drop-box" id="drop">Click or drop an image here to create a crisp SVG</div>
     <input type="file" id="file" accept="image/*" hidden>
     <p id="status" role="status" aria-live="polite">Choose an image to begin.</p>
 
     <div class="controls">
-        <button id="downloadText" type="button" disabled>Download SVG text</button>
-        <button id="downloadImage" type="button" disabled>Download PNG preview</button>
+        <button id="downloadText" type="button" disabled>Download SVG</button>
     </div>
 
-    <div class="preview-wrap">
-        <strong>Image preview (scaled to fit)</strong>
-        <canvas id="preview" aria-label="Generated image preview"></canvas>
-    </div>
     <label for="output"><strong>Generated SVG text</strong></label>
     <textarea id="output" readonly placeholder="Generated SVG will appear here..."></textarea>
 
@@ -39,14 +32,10 @@
         const fileInput = document.getElementById('file');
         const output = document.getElementById('output');
         const status = document.getElementById('status');
-        const preview = document.getElementById('preview');
         const downloadText = document.getElementById('downloadText');
-        const downloadImage = document.getElementById('downloadImage');
         const TILE_SIZE = 512;
-        const MAX_PREVIEW_DIMENSION = 1200;
         const MAX_INLINE_SVG_BYTES = 2 * 1024 * 1024;
-        // Larger images are kept as an embedded source image to avoid a gigantic,
-        // lossy-in-practice per-pixel SVG and excessive browser memory usage.
+        // Above this limit, embed the source image to avoid generating billions of SVG nodes.
         const MAX_VECTOR_PIXELS = 25_000_000;
         let currentSvgBlob = null;
         let runId = 0;
@@ -67,7 +56,6 @@
             fileInput.value = '';
         });
         downloadText.addEventListener('click', downloadSvg);
-        downloadImage.addEventListener('click', downloadPng);
 
         function process(selectedFile) {
             if (!selectedFile) return;
@@ -80,40 +68,39 @@
             currentSvgBlob = null;
             output.value = '';
             downloadText.disabled = true;
-            downloadImage.disabled = true;
             status.textContent = 'Loading image…';
             const objectUrl = URL.createObjectURL(selectedFile);
             const img = new Image();
+            img.decoding = 'async';
 
             img.onload = async () => {
                 try {
                     const width = img.naturalWidth;
                     const height = img.naturalHeight;
-                    if (!width || !height) throw new Error('The image has no readable pixels.');
+                    if (!width || !height || !Number.isSafeInteger(width * height)) {
+                        throw new Error('The image dimensions are invalid or too large to process.');
+                    }
 
-                    drawPreview(img, width, height);
+                    const svgHeader = makeSvgHeader(width, height);
                     if (width * height > MAX_VECTOR_PIXELS) {
-                        status.textContent = 'Large image detected; preserving it exactly inside an SVG…';
+                        status.textContent = 'Large image detected; preserving the source image inside an SVG…';
                         const dataUrl = await readFileAsDataUrl(selectedFile);
                         if (thisRun !== runId) return;
                         currentSvgBlob = new Blob([
-                            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">\n`,
-                            `<image width="${width}" height="${height}" href="${dataUrl}" />\n`,
+                            svgHeader,
+                            `  <image x="0" y="0" width="${width}" height="${height}" href="${dataUrl}" preserveAspectRatio="none" image-rendering="pixelated" />\n`,
                             '</svg>'
                         ], { type: 'image/svg+xml;charset=utf-8' });
-                        downloadText.disabled = false;
-                        downloadImage.disabled = false;
-                        drop.textContent = 'Success! Drop another image or click to choose one.';
-                        output.value = currentSvgBlob.size <= MAX_INLINE_SVG_BYTES
-                            ? await currentSvgBlob.text()
-                            : `Exact image-preserving SVG generated (${formatBytes(currentSvgBlob.size)}). Use “Download SVG text” to save it.`;
+                        await showOutputOrDownloadHint(currentSvgBlob, thisRun);
                         if (thisRun === runId) {
-                            status.textContent = `Exact appearance preserved in an SVG with the original image embedded (${width.toLocaleString()} × ${height.toLocaleString()}; ${formatBytes(currentSvgBlob.size)}). This large-image mode avoids lossy canvas re-reading and huge per-pixel vector output.`;
+                            downloadText.disabled = false;
+                            drop.textContent = 'Success! Drop another image or click to choose one.';
+                            status.textContent = `Large image preserved inside an SVG (${width.toLocaleString()} × ${height.toLocaleString()}; ${formatBytes(currentSvgBlob.size)}).`;
                         }
                         return;
                     }
 
-                    const parts = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">\n`];
+                    const parts = [svgHeader];
                     const tileCanvas = document.createElement('canvas');
                     const tileContext = tileCanvas.getContext('2d', { willReadFrequently: true });
                     if (!tileContext) throw new Error('This browser could not create a canvas context.');
@@ -121,7 +108,7 @@
                     const totalTiles = Math.ceil(width / TILE_SIZE) * Math.ceil(height / TILE_SIZE);
                     let completedTiles = 0;
 
-                    // Read one tile at a time; SVG coordinates stay in original image pixels.
+                    // Tile reads bound temporary pixel memory; coordinates remain in source pixels.
                     for (let tileY = 0; tileY < height; tileY += TILE_SIZE) {
                         for (let tileX = 0; tileX < width; tileX += TILE_SIZE) {
                             if (thisRun !== runId) return;
@@ -135,28 +122,24 @@
                             parts.push(result.svg);
                             rectCount += result.rectCount;
                             completedTiles++;
-                            status.textContent = `Reading image in tiles… ${Math.floor(completedTiles / totalTiles * 100)}%`;
+                            status.textContent = `Converting image to crisp SVG… ${Math.floor(completedTiles / totalTiles * 100)}%`;
                         }
                         await new Promise((resolve) => setTimeout(resolve, 0));
                     }
                     if (thisRun !== runId) return;
                     parts.push('</svg>');
                     currentSvgBlob = new Blob(parts, { type: 'image/svg+xml;charset=utf-8' });
-                    downloadText.disabled = false;
-                    downloadImage.disabled = false;
-                    drop.textContent = 'Success! Drop another image or click to choose one.';
-                    output.value = currentSvgBlob.size <= MAX_INLINE_SVG_BYTES
-                        ? await currentSvgBlob.text()
-                        : `SVG generated (${formatBytes(currentSvgBlob.size)}). The text is too large to display safely here; use “Download SVG text” to save it.`;
+                    await showOutputOrDownloadHint(currentSvgBlob, thisRun);
                     if (thisRun === runId) {
-                        status.textContent = `${rectCount.toLocaleString()} SVG rectangles generated (${width.toLocaleString()} × ${height.toLocaleString()}). Processed in ${TILE_SIZE} × ${TILE_SIZE} pixel tiles; SVG size ${formatBytes(currentSvgBlob.size)}.`;
+                        downloadText.disabled = false;
+                        drop.textContent = 'Success! Drop another image or click to choose one.';
+                        status.textContent = `${rectCount.toLocaleString()} crisp SVG rectangles generated (${width.toLocaleString()} × ${height.toLocaleString()}); ${formatBytes(currentSvgBlob.size)}.`;
                     }
                 } catch (error) {
                     if (thisRun === runId) {
                         currentSvgBlob = null;
                         output.value = '';
                         downloadText.disabled = true;
-                        downloadImage.disabled = true;
                         status.textContent = 'Could not process image: ' + error.message;
                     }
                 } finally {
@@ -168,6 +151,19 @@
                 if (thisRun === runId) status.textContent = 'The selected file could not be loaded as an image.';
             };
             img.src = objectUrl;
+        }
+
+        function makeSvgHeader(width, height) {
+            return `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges">\n`;
+        }
+
+        async function showOutputOrDownloadHint(blob, thisRun) {
+            if (blob.size <= MAX_INLINE_SVG_BYTES) {
+                output.value = await blob.text();
+            } else {
+                output.value = `SVG generated (${formatBytes(blob.size)}). It is too large to display safely in this text area; use “Download SVG” to save the complete file.`;
+            }
+            if (thisRun !== runId) return;
         }
 
         function readFileAsDataUrl(file) {
@@ -212,17 +208,8 @@
         }
 
         function writeRect(x, y, width, color, alphaByte) {
-            const opacity = alphaByte < 255 ? ` fill-opacity="${Number((alphaByte / 255).toFixed(8))}"` : '';
-            return `  <rect x="${x}" y="${y}" width="${width}" height="1" fill="${color}"${opacity} />\n`;
-        }
-
-        function drawPreview(img, width, height) {
-            const scale = Math.min(1, MAX_PREVIEW_DIMENSION / Math.max(width, height));
-            preview.width = Math.max(1, Math.round(width * scale));
-            preview.height = Math.max(1, Math.round(height * scale));
-            const context = preview.getContext('2d');
-            context.clearRect(0, 0, preview.width, preview.height);
-            context.drawImage(img, 0, 0, preview.width, preview.height);
+            const opacity = alphaByte < 255 ? ` fill-opacity="${(alphaByte / 255).toString()}"` : '';
+            return `  <rect x="${x}" y="${y}" width="${width}" height="1" fill="${color}"${opacity} shape-rendering="crispEdges" />\n`;
         }
 
         function formatBytes(bytes) {
@@ -233,13 +220,6 @@
 
         function downloadSvg() {
             if (currentSvgBlob) downloadBlob(currentSvgBlob, 'pixel-art.svg');
-        }
-
-        function downloadPng() {
-            preview.toBlob((blob) => {
-                if (blob) downloadBlob(blob, 'pixel-art-preview.png');
-                else status.textContent = 'The PNG preview could not be created.';
-            }, 'image/png');
         }
 
         function downloadBlob(blob, filename) {
