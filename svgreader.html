@@ -45,6 +45,9 @@
         const TILE_SIZE = 512;
         const MAX_PREVIEW_DIMENSION = 1200;
         const MAX_INLINE_SVG_BYTES = 2 * 1024 * 1024;
+        // Larger images are kept as an embedded source image to avoid a gigantic,
+        // lossy-in-practice per-pixel SVG and excessive browser memory usage.
+        const MAX_VECTOR_PIXELS = 25_000_000;
         let currentSvgBlob = null;
         let runId = 0;
 
@@ -88,6 +91,28 @@
                     const height = img.naturalHeight;
                     if (!width || !height) throw new Error('The image has no readable pixels.');
 
+                    drawPreview(img, width, height);
+                    if (width * height > MAX_VECTOR_PIXELS) {
+                        status.textContent = 'Large image detected; preserving it exactly inside an SVG…';
+                        const dataUrl = await readFileAsDataUrl(selectedFile);
+                        if (thisRun !== runId) return;
+                        currentSvgBlob = new Blob([
+                            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">\n`,
+                            `<image width="${width}" height="${height}" href="${dataUrl}" />\n`,
+                            '</svg>'
+                        ], { type: 'image/svg+xml;charset=utf-8' });
+                        downloadText.disabled = false;
+                        downloadImage.disabled = false;
+                        drop.textContent = 'Success! Drop another image or click to choose one.';
+                        output.value = currentSvgBlob.size <= MAX_INLINE_SVG_BYTES
+                            ? await currentSvgBlob.text()
+                            : `Exact image-preserving SVG generated (${formatBytes(currentSvgBlob.size)}). Use “Download SVG text” to save it.`;
+                        if (thisRun === runId) {
+                            status.textContent = `Exact appearance preserved in an SVG with the original image embedded (${width.toLocaleString()} × ${height.toLocaleString()}; ${formatBytes(currentSvgBlob.size)}). This large-image mode avoids lossy canvas re-reading and huge per-pixel vector output.`;
+                        }
+                        return;
+                    }
+
                     const parts = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">\n`];
                     const tileCanvas = document.createElement('canvas');
                     const tileContext = tileCanvas.getContext('2d', { willReadFrequently: true });
@@ -96,7 +121,7 @@
                     const totalTiles = Math.ceil(width / TILE_SIZE) * Math.ceil(height / TILE_SIZE);
                     let completedTiles = 0;
 
-                    // Read one tile at a time to avoid allocating a full-image ImageData buffer.
+                    // Read one tile at a time; SVG coordinates stay in original image pixels.
                     for (let tileY = 0; tileY < height; tileY += TILE_SIZE) {
                         for (let tileX = 0; tileX < width; tileX += TILE_SIZE) {
                             if (thisRun !== runId) return;
@@ -112,22 +137,17 @@
                             completedTiles++;
                             status.textContent = `Reading image in tiles… ${Math.floor(completedTiles / totalTiles * 100)}%`;
                         }
-                        // Yield between tile rows so progress updates and cancellation remain responsive.
                         await new Promise((resolve) => setTimeout(resolve, 0));
                     }
                     if (thisRun !== runId) return;
                     parts.push('</svg>');
                     currentSvgBlob = new Blob(parts, { type: 'image/svg+xml;charset=utf-8' });
-                    drawPreview(img, width, height);
                     downloadText.disabled = false;
                     downloadImage.disabled = false;
                     drop.textContent = 'Success! Drop another image or click to choose one.';
-
-                    if (currentSvgBlob.size <= MAX_INLINE_SVG_BYTES) {
-                        output.value = await currentSvgBlob.text();
-                    } else {
-                        output.value = `SVG generated (${formatBytes(currentSvgBlob.size)}). The text is too large to display safely here; use “Download SVG text” to save it.`;
-                    }
+                    output.value = currentSvgBlob.size <= MAX_INLINE_SVG_BYTES
+                        ? await currentSvgBlob.text()
+                        : `SVG generated (${formatBytes(currentSvgBlob.size)}). The text is too large to display safely here; use “Download SVG text” to save it.`;
                     if (thisRun === runId) {
                         status.textContent = `${rectCount.toLocaleString()} SVG rectangles generated (${width.toLocaleString()} × ${height.toLocaleString()}). Processed in ${TILE_SIZE} × ${TILE_SIZE} pixel tiles; SVG size ${formatBytes(currentSvgBlob.size)}.`;
                     }
@@ -150,6 +170,15 @@
             img.src = objectUrl;
         }
 
+        function readFileAsDataUrl(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => reject(new Error('The original image could not be embedded in the SVG.'));
+                reader.readAsDataURL(file);
+            });
+        }
+
         function pixelsToSvg(data, width, height, offsetX, offsetY) {
             const lines = [];
             let rectCount = 0;
@@ -163,7 +192,6 @@
                     const color = alphaByte > 0
                         ? '#' + [data[index], data[index + 1], data[index + 2]].map(toHex).join('').toUpperCase()
                         : '';
-
                     if (runStart !== -1 && (color !== runColor || alphaByte !== runAlphaByte)) {
                         lines.push(writeRect(runStart + offsetX, y + offsetY, x - runStart, runColor, runAlphaByte));
                         rectCount++;
