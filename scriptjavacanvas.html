@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Image → Canvas (Compact Script)</title>
+  <title>Image → Canvas Script Generator</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     body { font-family: monospace; max-width: 900px; margin: 20px auto; padding: 20px; color: #222; }
@@ -11,35 +11,25 @@
     .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 16px 0; }
     button { padding: 9px 14px; cursor: pointer; font-family: inherit; }
     button:disabled { cursor: not-allowed; opacity: .5; }
-    textarea { box-sizing: border-box; width: 100%; height: 360px; margin-top: 12px; padding: 10px; font-family: monospace; font-size: 12px; background: #222; color: #0f0; }
     #status { min-height: 1.4em; }
   </style>
 </head>
 <body>
-  <h2>Image → Compact Canvas Script</h2>
-  <div id="drop" class="drop-box" tabindex="0" role="button" aria-controls="file">Click or drop an image here to generate a compact, crisp canvas script</div>
+  <h2>Image → Canvas Script</h2>
+  <div id="drop" class="drop-box" tabindex="0" role="button" aria-controls="file">Click or drop an image to generate a JavaScript file with palette and run arrays</div>
   <input id="file" type="file" accept="image/*" hidden />
   <p id="status" role="status" aria-live="polite">Choose an image to begin.</p>
-
   <div class="controls">
-    <button id="copyBtn" type="button" disabled>Copy Script</button>
-    <button id="downloadBtn" type="button" disabled>Download Script</button>
+    <button id="downloadBtn" type="button" disabled>Download Complete Script</button>
   </div>
-
-  <label for="output"><strong>Generated JavaScript</strong></label>
-  <textarea id="output" readonly placeholder="Generated compact script will appear here..."></textarea>
 
 <script>
 (() => {
   const drop = document.getElementById('drop');
   const fileInput = document.getElementById('file');
-  const output = document.getElementById('output');
   const status = document.getElementById('status');
-  const copyBtn = document.getElementById('copyBtn');
   const downloadBtn = document.getElementById('downloadBtn');
   const TILE_SIZE = 256;
-  const MAX_VECTOR_PIXELS = 25_000_000;
-  const MAX_INLINE_SCRIPT_BYTES = 2 * 1024 * 1024;
   let currentScriptBlob = null;
   let runId = 0;
 
@@ -64,10 +54,9 @@
     processFile(event.target.files[0]);
     fileInput.value = '';
   });
-  copyBtn.addEventListener('click', copyScript);
   downloadBtn.addEventListener('click', downloadScript);
 
-  function processFile(file) {
+  async function processFile(file) {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
       status.textContent = 'Please choose a valid image file.';
@@ -76,197 +65,130 @@
 
     const thisRun = ++runId;
     currentScriptBlob = null;
-    output.value = '';
-    copyBtn.disabled = true;
     downloadBtn.disabled = true;
     status.textContent = 'Loading image…';
-
     const objectUrl = URL.createObjectURL(file);
     const image = new Image();
     image.decoding = 'async';
-    image.onload = async () => {
-      try {
-        const width = image.naturalWidth;
-        const height = image.naturalHeight;
-        const pixelCount = width * height;
-        if (!width || !height || !Number.isSafeInteger(pixelCount)) {
-          throw new Error('The image dimensions are invalid or too large to process.');
-        }
 
-        if (pixelCount > MAX_VECTOR_PIXELS) {
-          status.textContent = 'Large image detected; preserving it in a standalone canvas script…';
-          const dataUrl = await readFileAsDataUrl(file);
+    try {
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = () => reject(new Error('The selected file could not be loaded as an image.'));
+        image.src = objectUrl;
+      });
+      if (thisRun !== runId) return;
+
+      const width = image.naturalWidth;
+      const height = image.naturalHeight;
+      const pixelCount = width * height;
+      if (!width || !height || !Number.isSafeInteger(pixelCount)) {
+        throw new Error('The image dimensions are invalid or too large to process.');
+      }
+
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('This browser could not create a canvas context.');
+
+      const palette = [];
+      const paletteMap = new Map();
+      const runs = [];
+      const totalTiles = Math.ceil(width / TILE_SIZE) * Math.ceil(height / TILE_SIZE);
+      let completedTiles = 0;
+
+      // Tile reads keep temporary pixel memory bounded. The exported data remains
+      // complete: every nontransparent source pixel is represented in PALETTE/RUNS.
+      for (let tileY = 0; tileY < height; tileY += TILE_SIZE) {
+        for (let tileX = 0; tileX < width; tileX += TILE_SIZE) {
           if (thisRun !== runId) return;
-          finishScript(makeEmbeddedImageScript(width, height, dataUrl), width, height, 0, 0, true, thisRun);
-          return;
-        }
+          const tileWidth = Math.min(TILE_SIZE, width - tileX);
+          const tileHeight = Math.min(TILE_SIZE, height - tileY);
+          canvas.width = tileWidth;
+          canvas.height = tileHeight;
+          context.drawImage(image, tileX, tileY, tileWidth, tileHeight, 0, 0, tileWidth, tileHeight);
+          const pixels = context.getImageData(0, 0, tileWidth, tileHeight).data;
 
-        const tileCanvas = document.createElement('canvas');
-        const context = tileCanvas.getContext('2d', { willReadFrequently: true });
-        if (!context) throw new Error('This browser could not create a canvas context.');
+          for (let y = 0; y < tileHeight; y++) {
+            const sourceY = tileY + y;
+            let runStart = -1;
+            let runColor = null;
+            for (let x = 0; x <= tileWidth; x++) {
+              const index = x < tileWidth ? (y * tileWidth + x) * 4 : -1;
+              const alpha = x < tileWidth ? pixels[index + 3] : 0;
+              let color = null;
+              if (x < tileWidth && alpha > 0) {
+                color = `rgba(${pixels[index]},${pixels[index + 1]},${pixels[index + 2]},${alpha / 255})`;
+              }
 
-        const paletteMap = new Map();
-        const palette = [];
-        const runs = [];
-        const totalTiles = Math.ceil(width / TILE_SIZE) * Math.ceil(height / TILE_SIZE);
-        let completedTiles = 0;
-
-        // Read pixels in tiles to bound temporary canvas memory. Alpha-zero pixels
-        // are skipped; every nontransparent pixel retains its original RGBA value.
-        for (let tileY = 0; tileY < height; tileY += TILE_SIZE) {
-          for (let tileX = 0; tileX < width; tileX += TILE_SIZE) {
-            if (thisRun !== runId) return;
-            const tileWidth = Math.min(TILE_SIZE, width - tileX);
-            const tileHeight = Math.min(TILE_SIZE, height - tileY);
-            tileCanvas.width = tileWidth;
-            tileCanvas.height = tileHeight;
-            context.drawImage(image, tileX, tileY, tileWidth, tileHeight, 0, 0, tileWidth, tileHeight);
-            const pixels = context.getImageData(0, 0, tileWidth, tileHeight).data;
-
-            for (let y = 0; y < tileHeight; y++) {
-              const sourceY = tileY + y;
-              let runStart = -1;
-              let runColor = null;
-
-              for (let x = 0; x <= tileWidth; x++) {
-                const index = x < tileWidth ? (y * tileWidth + x) * 4 : -1;
-                const alpha = x < tileWidth ? pixels[index + 3] : 0;
-                let color = null;
-                if (x < tileWidth && alpha > 0) {
-                  color = `rgba(${pixels[index]},${pixels[index + 1]},${pixels[index + 2]},${(alpha / 255).toFixed(8)})`;
+              if (runStart >= 0 && color !== runColor) {
+                let paletteIndex = paletteMap.get(runColor);
+                if (paletteIndex === undefined) {
+                  paletteIndex = palette.length;
+                  palette.push(runColor);
+                  paletteMap.set(runColor, paletteIndex);
                 }
-
-                const filled = color !== null;
-                if (runStart >= 0 && (!filled || color !== runColor)) {
-                  let paletteIndex = paletteMap.get(runColor);
-                  if (paletteIndex === undefined) {
-                    paletteIndex = palette.length;
-                    palette.push(runColor);
-                    paletteMap.set(runColor, paletteIndex);
-                  }
-                  runs.push([sourceY, runStart + tileX, x - 1 + tileX, paletteIndex]);
-                  runStart = -1;
-                  runColor = null;
-                }
-                if (filled && runStart < 0) {
-                  runStart = x;
-                  runColor = color;
-                }
+                runs.push([sourceY, runStart + tileX, x - 1 + tileX, paletteIndex]);
+                runStart = -1;
+                runColor = null;
+              }
+              if (color !== null && runStart < 0) {
+                runStart = x;
+                runColor = color;
               }
             }
-
-            completedTiles++;
-            status.textContent = `Converting image to crisp canvas script… ${Math.floor(completedTiles / totalTiles * 100)}%`;
           }
-          await new Promise(resolve => setTimeout(resolve, 0));
+
+          completedTiles++;
+          status.textContent = `Extracting complete palette and run data… ${Math.floor(completedTiles / totalTiles * 100)}%`;
         }
-        if (thisRun !== runId) return;
-        finishScript(makeVectorScript(width, height, palette, runs), width, height, palette.length, runs.length, false, thisRun);
-      } catch (error) {
-        if (thisRun === runId) {
-          currentScriptBlob = null;
-          output.value = '';
-          copyBtn.disabled = true;
-          downloadBtn.disabled = true;
-          status.textContent = 'Could not process image: ' + error.message;
-        }
-      } finally {
-        URL.revokeObjectURL(objectUrl);
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
-    };
-    image.onerror = () => {
+      if (thisRun !== runId) return;
+
+      // Store JSON as Blob parts so the whole generated script need not also be
+      // duplicated into one large in-memory string.
+      const scriptParts = [
+        '// Complete Canvas Pixel Script: palette and horizontal run arrays\n',
+        `// Source dimensions: ${width} x ${height}\n`,
+        `const WIDTH=${width},HEIGHT=${height};\n`,
+        'const PALETTE='
+      ];
+      appendJsonArrayParts(scriptParts, palette);
+      scriptParts.push(';\nconst RUNS=');
+      appendJsonArrayParts(scriptParts, runs);
+      scriptParts.push(';\n',
+        '(()=>{\n',
+        '  let canvas=document.getElementById("myCanvas");\n',
+        '  if(!canvas){canvas=document.createElement("canvas");canvas.id="myCanvas";document.body.appendChild(canvas);}\n',
+        '  canvas.width=WIDTH;canvas.height=HEIGHT;\n',
+        '  canvas.style.imageRendering="pixelated";canvas.style.imageRendering="crisp-edges";\n',
+        '  const ctx=canvas.getContext("2d");if(!ctx)throw new Error("Could not create a 2D canvas context.");\n',
+        '  ctx.imageSmoothingEnabled=false;\n',
+        '  for(let i=0;i<RUNS.length;i++){const r=RUNS[i];ctx.fillStyle=PALETTE[r[3]];ctx.fillRect(r[1],r[0],r[2]-r[1]+1,1);}\n',
+        '})();\n'
+      );
+      currentScriptBlob = new Blob(scriptParts, { type: 'text/javascript;charset=utf-8' });
+      downloadBtn.disabled = false;
+      drop.textContent = 'Success! Drop another image or click to choose one.';
+      status.textContent = `Complete script ready (${width.toLocaleString()} × ${height.toLocaleString()}; ${palette.length.toLocaleString()} palette colors; ${runs.length.toLocaleString()} runs; ${formatBytes(currentScriptBlob.size)}). Download to save PALETTE and RUNS arrays.`;
+    } catch (error) {
+      if (thisRun === runId) {
+        currentScriptBlob = null;
+        downloadBtn.disabled = true;
+        status.textContent = 'Could not process image: ' + error.message;
+      }
+    } finally {
       URL.revokeObjectURL(objectUrl);
-      if (thisRun === runId) status.textContent = 'The selected file could not be loaded as an image.';
-    };
-    image.src = objectUrl;
-  }
-
-  function makeVectorScript(width, height, palette, runs) {
-    return [
-      '// Crisp Canvas Pixel Script',
-      `// Source dimensions: ${width} x ${height}`,
-      '(() => {',
-      '  let canvas = document.getElementById("myCanvas");',
-      '  if (!canvas) {',
-      '    canvas = document.createElement("canvas");',
-      '    canvas.id = "myCanvas";',
-      '    document.body.appendChild(canvas);',
-      '  }',
-      `  canvas.width = ${width};`,
-      `  canvas.height = ${height};`,
-      '  canvas.style.imageRendering = "pixelated";',
-      '  canvas.style.imageRendering = "crisp-edges";',
-      '  const ctx = canvas.getContext("2d");',
-      '  if (!ctx) throw new Error("Could not create a 2D canvas context.");',
-      '  ctx.imageSmoothingEnabled = false;',
-      '  const PALETTE = ' + JSON.stringify(palette) + ';',
-      '  const RUNS = ' + JSON.stringify(runs) + ';',
-      '  for (let i = 0; i < RUNS.length; i++) {',
-      '    const run = RUNS[i];',
-      '    ctx.fillStyle = PALETTE[run[3]];',
-      '    ctx.fillRect(run[1], run[0], run[2] - run[1] + 1, 1);',
-      '  }',
-      '})();'
-    ].join('\n');
-  }
-
-  function makeEmbeddedImageScript(width, height, dataUrl) {
-    return [
-      '// Large-image Canvas Script (complete source image embedded)',
-      `// Original image dimensions: ${width} x ${height}`,
-      '// The backing canvas is capped to avoid allocating excessive pixel memory.',
-      '(() => {',
-      '  const MAX_CANVAS_PIXELS = 25000000;',
-      `  const sourceWidth = ${width};`,
-      `  const sourceHeight = ${height};`,
-      '  const scale = Math.min(1, Math.sqrt(MAX_CANVAS_PIXELS / (sourceWidth * sourceHeight)));',
-      '  let canvas = document.getElementById("myCanvas");',
-      '  if (!canvas) {',
-      '    canvas = document.createElement("canvas");',
-      '    canvas.id = "myCanvas";',
-      '    document.body.appendChild(canvas);',
-      '  }',
-      '  canvas.width = Math.max(1, Math.floor(sourceWidth * scale));',
-      '  canvas.height = Math.max(1, Math.floor(sourceHeight * scale));',
-      '  canvas.style.imageRendering = "pixelated";',
-      '  canvas.style.imageRendering = "crisp-edges";',
-      '  const ctx = canvas.getContext("2d");',
-      '  if (!ctx) throw new Error("Could not create a 2D canvas context.");',
-      '  ctx.imageSmoothingEnabled = false;',
-      '  const image = new Image();',
-      '  image.onload = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.drawImage(image, 0, 0, canvas.width, canvas.height); };',
-      '  image.onerror = () => console.error("The embedded source image could not be loaded.");',
-      '  image.src = ' + JSON.stringify(dataUrl) + ';',
-      '})();'
-    ].join('\n');
-  }
-
-  function finishScript(script, width, height, paletteSize, runCount, embedded, thisRun) {
-    if (thisRun !== runId) return;
-    currentScriptBlob = new Blob([script], { type: 'text/javascript;charset=utf-8' });
-    if (currentScriptBlob.size <= MAX_INLINE_SCRIPT_BYTES) {
-      output.value = script;
-      copyBtn.disabled = false;
-    } else {
-      output.value = `Script generated (${formatBytes(currentScriptBlob.size)}). It is too large to display safely here; use “Download Script” to save the complete file.`;
-      copyBtn.disabled = true;
     }
-    downloadBtn.disabled = false;
-    drop.textContent = 'Success! Drop another image or click to choose one.';
-    const details = embedded
-      ? 'large image embedded; generated canvas is scaled to stay within the 25-million-pixel backing-store limit'
-      : `palette=${paletteSize.toLocaleString()}, horizontal runs=${runCount.toLocaleString()}`;
-    status.textContent = `Crisp script generated (${width.toLocaleString()} × ${height.toLocaleString()}; ${formatBytes(currentScriptBlob.size)}; ${details}).`;
   }
 
-  function readFileAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(new Error('The original image could not be embedded in the script.'));
-      reader.onabort = () => reject(new Error('Reading the image was cancelled.'));
-      reader.readAsDataURL(file);
-    });
+  function appendJsonArrayParts(parts, array) {
+    parts.push('[');
+    for (let i = 0; i < array.length; i++) {
+      if (i) parts.push(',');
+      parts.push(JSON.stringify(array[i]));
+    }
+    parts.push(']');
   }
 
   function formatBytes(bytes) {
@@ -275,22 +197,12 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
-  async function copyScript() {
-    if (!currentScriptBlob || currentScriptBlob.size > MAX_INLINE_SCRIPT_BYTES) return;
-    try {
-      await navigator.clipboard.writeText(output.value);
-      status.textContent = 'Script copied to clipboard.';
-    } catch (error) {
-      status.textContent = 'Could not copy script: ' + error.message;
-    }
-  }
-
   function downloadScript() {
     if (!currentScriptBlob) return;
     const url = URL.createObjectURL(currentScriptBlob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'canvas-pixels-crisp.js';
+    link.download = 'canvas-palette-runs.js';
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
