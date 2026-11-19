@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Image to Canvas Text Array Converter</title>
+    <style>
+        body { font-family: monospace; max-width: 900px; margin: 20px auto; padding: 20px; color: #222; }
+        .drop-box { border: 2px dashed #333; padding: 30px; text-align: center; cursor: pointer; background: #f9f9f9; }
+        .drop-box.dragging { background: #e8f2ff; border-color: #1769aa; }
+        .controls { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; align-items: center; }
+        button { padding: 9px 14px; cursor: pointer; }
+        button:disabled { cursor: not-allowed; opacity: .5; }
+        pre { width: 100%; height: 450px; background: #1e1e1e; color: #4af626; padding: 15px; box-sizing: border-box; overflow: auto; font-size: 11px; border-radius: 4px; border: 1px solid #000; }
+        #status { min-height: 1.4em; }
+    </style>
+</head>
+<body>
+
+    <h2>Image to Text Matrix Array</h2>
+    <div class="drop-box" id="drop">Click or drop an image here to extract a pixel matrix</div>
+    <input type="file" id="file" accept="image/*" hidden>
+    <p id="status" role="status" aria-live="polite">Choose an image to begin.</p>
+
+    <div class="controls">
+        <button id="download" type="button" disabled>Download Matrix</button>
+    </div>
+
+    <h3>Extracted Array Data</h3>
+    <pre id="output">Uploaded image pixel records will output here...</pre>
+
+    <script>
+        const drop = document.getElementById('drop');
+        const fileInput = document.getElementById('file');
+        const output = document.getElementById('output');
+        const status = document.getElementById('status');
+        const downloadButton = document.getElementById('download');
+        const TILE_SIZE = 256;
+        const MAX_OUTPUT_PREVIEW_BYTES = 2 * 1024 * 1024;
+        let currentTextBlob = null;
+        let runId = 0;
+
+        drop.addEventListener('click', () => fileInput.click());
+        drop.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            drop.classList.add('dragging');
+        });
+        drop.addEventListener('dragleave', () => drop.classList.remove('dragging'));
+        drop.addEventListener('drop', (event) => {
+            event.preventDefault();
+            drop.classList.remove('dragging');
+            process(event.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', (event) => {
+            process(event.target.files[0]);
+            fileInput.value = '';
+        });
+        downloadButton.addEventListener('click', downloadMatrix);
+
+        function process(targetFile) {
+            if (!targetFile) return;
+            if (!targetFile.type.startsWith('image/')) {
+                status.textContent = 'Please choose a valid image file.';
+                return;
+            }
+
+            const thisRun = ++runId;
+            currentTextBlob = null;
+            output.textContent = 'Loading image...';
+            downloadButton.disabled = true;
+            status.textContent = 'Loading image…';
+
+            const objectUrl = URL.createObjectURL(targetFile);
+            const image = new Image();
+            image.decoding = 'async';
+
+            image.onload = async () => {
+                try {
+                    const width = image.naturalWidth;
+                    const height = image.naturalHeight;
+                    if (!width || !height || !Number.isSafeInteger(width * height)) {
+                        throw new Error('The image dimensions are invalid or too large to process.');
+                    }
+
+                    const tileCanvas = document.createElement('canvas');
+                    const context = tileCanvas.getContext('2d', { willReadFrequently: true });
+                    if (!context) throw new Error('This browser could not create a canvas context.');
+
+                    const chunks = [`Dimensions: ${width} x ${height}\n`];
+                    const totalTiles = Math.ceil(width / TILE_SIZE) * Math.ceil(height / TILE_SIZE);
+                    let completedTiles = 0;
+
+                    for (let tileY = 0; tileY < height; tileY += TILE_SIZE) {
+                        for (let tileX = 0; tileX < width; tileX += TILE_SIZE) {
+                            if (thisRun !== runId) return;
+                            const tileWidth = Math.min(TILE_SIZE, width - tileX);
+                            const tileHeight = Math.min(TILE_SIZE, height - tileY);
+                            tileCanvas.width = tileWidth;
+                            tileCanvas.height = tileHeight;
+                            context.clearRect(0, 0, tileWidth, tileHeight);
+                            context.drawImage(image, tileX, tileY, tileWidth, tileHeight, 0, 0, tileWidth, tileHeight);
+                            const pixels = context.getImageData(0, 0, tileWidth, tileHeight).data;
+
+                            for (let y = 0; y < tileHeight; y++) {
+                                const sourceY = tileY + y;
+                                let row = `Y-${String(sourceY).padStart(6, '0')}: `;
+                                for (let x = 0; x < tileWidth; x++) {
+                                    const index = (y * tileWidth + x) * 4;
+                                    const alpha = pixels[index + 3];
+                                    if (alpha === 0) {
+                                        row += '. ';
+                                    } else {
+                                        const hex = '#' + [pixels[index], pixels[index + 1], pixels[index + 2]]
+                                            .map(value => value.toString(16).padStart(2, '0'))
+                                            .join('').toUpperCase();
+                                        row += `${hex} `;
+                                    }
+                                }
+                                chunks.push(row.trimEnd() + '\n');
+                            }
+
+                            completedTiles++;
+                            status.textContent = `Extracting pixel matrix… ${Math.floor(completedTiles / totalTiles * 100)}%`;
+                        }
+                        await new Promise(resolve => setTimeout(resolve, 0));
+                    }
+
+                    if (thisRun !== runId) return;
+                    const text = chunks.join('');
+                    currentTextBlob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+
+                    if (currentTextBlob.size <= MAX_OUTPUT_PREVIEW_BYTES) {
+                        output.textContent = text;
+                    } else {
+                        output.textContent = `Matrix generated (${formatBytes(currentTextBlob.size)}). It is too large to display safely here; use “Download Matrix” to save the complete file.`;
+                    }
+
+                    downloadButton.disabled = false;
+                    drop.textContent = 'Success! Drop another image or click to choose one.';
+                    status.textContent = `Pixel matrix extracted (${width.toLocaleString()} × ${height.toLocaleString()}; ${formatBytes(currentTextBlob.size)}).`;
+                } catch (error) {
+                    if (thisRun === runId) {
+                        currentTextBlob = null;
+                        output.textContent = 'Processing Error: ' + error.message;
+                        downloadButton.disabled = true;
+                        status.textContent = 'Could not process image: ' + error.message;
+                    }
+                } finally {
+                    URL.revokeObjectURL(objectUrl);
+                }
+            };
+
+            image.onerror = () => {
+                URL.revokeObjectURL(objectUrl);
+                if (thisRun === runId) {
+                    output.textContent = 'Processing Error: The selected file could not be loaded as an image.';
+                    status.textContent = 'The selected file could not be loaded as an image.';
+                }
+            };
+            image.src = objectUrl;
+        }
+
+        function formatBytes(bytes) {
+            if (bytes < 1024) return `${bytes} B`;
+            if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+            return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+        }
+
+        function downloadMatrix() {
+            if (!currentTextBlob) return;
+            const url = URL.createObjectURL(currentTextBlob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'pixel-matrix.txt';
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+    </script>
+
+</body>
+</html>
